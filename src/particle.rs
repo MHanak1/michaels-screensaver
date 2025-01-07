@@ -1,133 +1,41 @@
-use crate::particle::{ParticleInstance, ParticleSystem, ParticleSystemData};
-use crate::texture;
-use std::ops::Range;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+use crate::util::BoundingBox;
+use crate::instance::{Instance, InstanceRaw};
+use crate::model::{DrawMesh, Mesh, ModelVertex};
+use std::ops::{Add, Mul, Range};
+use std::time::Duration;
 use cgmath::Vector3;
-#[cfg(target_arch = "wasm32")]
-use web_time::Duration;
-use wgpu::{Color, Queue};
 use wgpu::util::DeviceExt;
-use crate::instance::Instance;
+use wgpu::{Color, Queue};
+use rand::random;
 
-pub trait Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static>;
+pub struct ParticleSystemData {
+    domain: BoundingBox<f32>,
 }
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ModelVertex {
-    pub position: [f32; 3],
-    pub tex_coords: [f32; 2],
-}
-
-impl Vertex for ModelVertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
+impl ParticleSystemData {
+    pub fn new(domain: BoundingBox<f32>) -> Self {
+        ParticleSystemData {
+            domain
         }
     }
 }
 
-pub trait DrawModel<'a> {
-    fn draw_mesh(&mut self, mesh: &'a Box<dyn Mesh>);
-    fn draw_mesh_instanced(&mut self, mesh: &'a Box<dyn Mesh>, instances: Range<u32>);
-}
-impl<'a, 'b> DrawModel<'b> for wgpu::RenderPass<'a>
-where
-    'b: 'a,
-{
-    fn draw_mesh(&mut self, mesh: &'b Box<dyn Mesh>) {
-        self.draw_mesh_instanced(mesh, 0..1);
-    }
-
-    fn draw_mesh_instanced(&mut self, mesh: &'b Box<dyn Mesh>, instances: Range<u32>) {
-        mesh.draw_self_instanced(self, instances);
-    }
-}
-
-pub struct Model {
-    pub mesh: Box<dyn Mesh>,
-    pub material: Material,
-}
-
-impl Model {
-    pub(crate) fn update(&mut self, delta_t: Duration, queue: &Queue) {
-        self.mesh.update(delta_t, queue);
-    }
-}
-
-pub struct Material {
-    pub diffuse_texture: texture::Texture,
-    pub bind_group: wgpu::BindGroup,
-}
-
-impl Material {
-    pub fn new(
-        diffuse_texture: texture::Texture,
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-    ) -> Material {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: None,
-        });
-
-        Material {
-            diffuse_texture,
-            bind_group,
-        }
-    }
-}
-
-pub trait Mesh: DrawMesh {
-    fn rebuild_instance_buffer(&mut self, device: &wgpu::Device);
-    fn update_instance_buffer(&mut self, queue: &Queue);
-    fn instance_count(&self) -> usize;
-    fn instances_mut(&mut self) -> &mut Vec<Box<ParticleInstance>>;
-    fn set_instances(&mut self, instances: Vec<Box<ParticleInstance>>);
-    fn update(&mut self, delta_t: Duration, queue: &Queue);
-}
-
-pub struct ModelMesh {
+pub struct ParticleSystem {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub instances: Vec<Box<ParticleInstance>>,
+    pub particle_system_data: ParticleSystemData,
     pub num_elements: u32,
 }
 
-impl ModelMesh {
+impl ParticleSystem {
     pub fn create_billboard(
         width: f32,
         height: f32,
         position: Vector3<f32>,
+        particle_system_data: ParticleSystemData,
         device: &wgpu::Device,
-    ) -> anyhow::Result<ModelMesh> {
+    ) -> anyhow::Result<ParticleSystem> {
         let vertices = &[
             ModelVertex {
                 position: [-width / 2.0, -height / 2.0, 0.0],
@@ -180,17 +88,42 @@ impl ModelMesh {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        Ok(ModelMesh {
+        Ok(ParticleSystem {
             vertex_buffer,
             index_buffer,
             instances,
             instance_buffer,
             num_elements: indices.len() as u32,
+            particle_system_data,
         })
+    }
+    pub fn populate_random(&mut self, instance_count: usize, device: &wgpu::Device) {
+        self.instances = Vec::with_capacity(instance_count);
+
+
+        for i in 0..7500 {
+            let mut position = self.particle_system_data.domain.random_pos();
+
+            let new_color = wgpu::Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            };
+
+            self.instances.push(Box::new(ParticleInstance {
+                position,
+                color: new_color,
+                velocity: Vector3::new(0.0, 0.0, 0.0),
+                //velocity: Vector3::new(0.0, 0.0, 0.0),
+                scale: 1.0,
+            }));
+        }
+        self.rebuild_instance_buffer(device);
     }
 }
 
-impl Mesh for ModelMesh {
+impl Mesh for ParticleSystem {
     fn rebuild_instance_buffer(&mut self, device: &wgpu::Device) {
         let instance_data = self
             .instances
@@ -235,11 +168,18 @@ impl Mesh for ModelMesh {
     }
 
     fn update(&mut self, delta_t: Duration, queue: &Queue) {
-        //do nothing
+        for instance in self.instances.iter_mut() {
+            let v_multiplier = delta_t.as_secs_f32() * instance.scale;
+            let mut new_pos = instance.position.add(instance.velocity.mul(v_multiplier));
+
+            instance.position = self.particle_system_data.domain.modulo_pos(new_pos);
+        }
+        //model.mesh.rebuild_instance_buffer(device);
+        self.update_instance_buffer(queue);
     }
 }
 
-impl DrawMesh for ModelMesh {
+impl DrawMesh for ParticleSystem {
     fn draw_self_instanced(&self, pass: &mut wgpu::RenderPass, instances: Range<u32>) {
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -248,6 +188,27 @@ impl DrawMesh for ModelMesh {
     }
 }
 
-pub trait DrawMesh {
-    fn draw_self_instanced(&self, pass: &mut wgpu::RenderPass, instances: Range<u32>);
+pub struct ParticleInstance {
+    pub(crate) position: cgmath::Vector3<f32>,
+    //rotation: cgmath::Quaternion<f32>,
+    pub(crate) color: wgpu::Color,
+    pub(crate) velocity: cgmath::Vector3<f32>, //in case i wanted to update the position through a compute shader (don't know how yet)
+    pub(crate) scale: f32,
+}
+
+impl Instance for ParticleInstance {
+    fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            position: self.position.into(),
+            //model: Matrix4::from_translation(Vector3::zero()).into(),
+            color: [
+                self.color.r as f32,
+                self.color.g as f32,
+                self.color.b as f32,
+                self.color.a as f32,
+            ],
+            //velocity: self.velocity.into(),
+            scale: self.scale,
+        }
+    }
 }

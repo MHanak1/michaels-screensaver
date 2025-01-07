@@ -1,10 +1,11 @@
-#![windows_subsystem = "windows"]
-
+mod instance;
 mod model;
+mod particle;
 mod resource;
 mod screensaver;
 mod shaders;
 mod texture;
+mod util;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
@@ -17,99 +18,75 @@ use winit::platform::web::WindowBuilderExtWebSys;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::WindowExtWebSys;
 
+use crate::instance::InstanceRaw;
 use crate::screensaver::{ScreenSaver, ScreenSaverType};
+use cfg_if::cfg_if;
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Vector3};
+use config::{Config, FileFormat};
 use image::GenericImageView;
+use log::error;
 use model::Vertex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Add;
 use wgpu::util::DeviceExt;
+use wgpu::Limits;
 use winit::error::EventLoopError;
-use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
+use winit::event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey, SmolStr};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowBuilder};
 
-//TODO: implement scale
-struct Instance {
-    position: cgmath::Vector3<f32>,
-    rotation: cgmath::Quaternion<f32>,
-    color: wgpu::Color,
-    velocity: cgmath::Vector3<f32>, //in case i wanted to update the position through a compute shader (don't know how yet)
-    scale: f32,
-}
+pub const DEFAULT_CONFIG: &[u8] = include_bytes!("resources/default_config.toml");
 
-impl Instance {
-    fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            model: (cgmath::Matrix4::from_translation(self.position)
-                * cgmath::Matrix4::from(self.rotation))
-            .into(),
-            //model: Matrix4::from_translation(Vector3::zero()).into(),
-            color: [self.color.r as f32, self.color.g as f32, self.color.b as f32, self.color.a as f32],
-            //velocity: self.velocity.into(),
-            scale: self.scale,
-        }
+#[cfg(target_arch = "wasm32")]
+pub fn get_config() -> Config {
+    //yes I am converting request parameters into a .toml file and passing it as a config what about it
+    let url_params = web_sys::UrlSearchParams::new_with_str(
+        web_sys::window()
+            .unwrap()
+            .location()
+            .search()
+            .unwrap()
+            .as_str(),
+    )
+    .unwrap();
+    let mut params_toml = String::new();
+    for param in url_params.keys() {
+        //log::error!("{}", param.unwrap().as_string().unwrap());
+        params_toml.push_str(&*format!(
+            "{} = \"{}\"\n",
+            param.clone().unwrap().as_string().unwrap(),
+            url_params
+                .get(&*param.unwrap().as_string().unwrap())
+                .unwrap()
+        ));
     }
+
+    Config::builder()
+        .add_source(config::File::from_str(
+            std::str::from_utf8(DEFAULT_CONFIG).expect("Failed to read the default config"),
+            FileFormat::Toml,
+        ))
+        .add_source(config::File::from_str(&*params_toml, FileFormat::Toml))
+        .build()
+        .unwrap()
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    color: [f32; 4],
-    //velocity: [f32; 3],
-    scale: f32,
-}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_config() -> Config {
+    let mut config_path = dirs::config_dir().unwrap().to_path_buf();
+    config_path.push("michaels-screensaver.toml");
 
-impl InstanceRaw {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<InstanceRaw>() as wgpu::BufferAddress,
-            // We need to switch from using a step mode of Vertex to Instance
-            // This means that our shaders will only change to use the next
-            // instance when the shader starts processing a new instance
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // A mat4 takes up 4 vertex slots as it is technically 4 vec4s. We need to define a slot
-                // for each vec4. We'll have to reassemble the mat4 in the shader.
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    // While our vertex shader only uses locations 0, and 1 now, in later tutorials, we'll
-                    // be using 2, 3, and 4, for Vertex. We'll start at slot 5, not conflict with them later
-                    shader_location: 5,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    shader_location: 8,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                    shader_location: 9,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 20]>() as wgpu::BufferAddress,
-                    shader_location: 10,
-                    format: wgpu::VertexFormat::Float32,
-                },
-            ],
-        }
-    }
+    Config::builder()
+        .add_source(config::File::from_str(
+            std::str::from_utf8(DEFAULT_CONFIG).expect("Failed to read the default config"),
+            FileFormat::Toml,
+        ))
+        .add_source(config::File::with_name(config_path.to_str().unwrap()))
+        .add_source(config::Environment::with_prefix("APP"))
+        .build()
+        .unwrap()
 }
 
 // We need this for Rust to store our data correctly for the shaders
@@ -135,8 +112,6 @@ impl CameraUniform {
     }
 }
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
-
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     -1.0, 0.0, 0.0, 0.0,
@@ -161,20 +136,19 @@ struct Camera {
 }
 
 struct CameraController {
-    speed: f32,
     pressed_keys: HashSet<Key>,
 }
 
 impl CameraController {
-    fn new(speed: f32) -> Self {
+    fn new() -> Self {
         Self {
-            speed,
             pressed_keys: HashSet::new(),
         }
     }
 
     fn process_events(&mut self, event: &WindowEvent) -> bool {
         match event {
+            #[cfg(debug_assertions)]
             WindowEvent::KeyboardInput {
                 event: KeyEvent {
                     state, logical_key, ..
@@ -195,8 +169,6 @@ impl CameraController {
 
     fn update_camera(&self, camera: &mut Camera) {
         use cgmath::InnerSpace;
-        let forward = camera.target - camera.eye;
-        let mut offset = Vector3::zero();
         let move_delta = 0.1;
 
         for key in self.pressed_keys.iter() {
@@ -222,8 +194,6 @@ impl CameraController {
                 _ => {}
             }
         }
-
-        let _ = camera.eye.add(offset);
     }
 }
 
@@ -244,7 +214,7 @@ impl Camera {
                     Matrix4::new(
                         1.0 / self.ratio, 0.0, 0.0, 0.0, //x
                         0.0, 1.0, 0.0, 0.0, //y
-                        (self.eye.x - self.target.x), (self.eye.y - self.target.y), 1.0, 0.0, //z
+                        self.eye.x - self.target.x, self.eye.y - self.target.y, 0.1, 0.0, //z
                         0.0, 0.0, 0.0, 1.0, //w
                     ), /*
                        Matrix4::new(
@@ -283,16 +253,22 @@ struct State<'a> {
 
 impl<'a> State<'a> {
     // Creating some of the wgpu types requires async code
-    async fn new(window: &'a Window) -> State<'a> {
+    async fn new(window: &'a Window, screensaver_config: Config) -> State<'a> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
+        /*
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::GL,
             #[cfg(target_arch = "wasm32")]
             backends: wgpu::Backends::GL,
+            ..Default::default()
+        });
+        */
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(), //fuck it anything will do
             ..Default::default()
         });
 
@@ -315,7 +291,9 @@ impl<'a> State<'a> {
                             // WebGL doesn't support all of wgpu's features, so if
                             // we're building for the web, we'll have to disable some.
                             required_limits: if cfg!(target_arch = "wasm32") {
-                                wgpu::Limits::downlevel_webgl2_defaults()
+                                //wgpu::Limits::downlevel_webgl2_defaults()
+                                Limits::downlevel_webgl2_defaults()
+                                    .using_resolution(adapter.limits())
                             } else {
                                 wgpu::Limits::default()
                             },
@@ -377,7 +355,7 @@ impl<'a> State<'a> {
                         ],
                         label: Some("texture_bind_group_layout"),
                     });
-
+                #[cfg(not(debug_assertions))]
                 let camera = Camera {
                     // position the camera 1 unit up and 2 units back
                     // +z is out of the screen
@@ -389,11 +367,25 @@ impl<'a> State<'a> {
                     znear: 0.1,
                     zfar: 100.0,
                     ratio: config.width as f32 / config.height as f32,
-                    //camera_type: CameraType::Perspective(45.0),
                     camera_type: CameraType::Orthographic(),
                 };
+                #[cfg(debug_assertions)]
+                let camera = Camera {
+                    // position the camera 1 unit up and 2 units back
+                    // +z is out of the screen
+                    eye: (0.0, 0.0, 0.0).into(),
+                    // have it look at the origin
+                    target: (0.0, 0.0, 0.0).into(),
+                    // which way is "up"
+                    up: cgmath::Vector3::unit_y(),
+                    znear: 0.1,
+                    zfar: 100.0,
+                    ratio: config.width as f32 / config.height as f32,
+                    camera_type: CameraType::Perspective(45.0),
+                };
 
-                let camera_controller = CameraController::new(0.2);
+
+                let camera_controller = CameraController::new();
 
                 let camera_bind_group_layout =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -502,14 +494,29 @@ impl<'a> State<'a> {
                         cache: None,
                     });
 
-                let screensaver_type = screensaver::ScreenSaverType::Snow;
+                let screensaver_name = screensaver_config
+                    .try_deserialize::<HashMap<String, String>>()
+                    .unwrap()
+                    .get("screensaver")
+                    .unwrap_or(&"snow".to_string())
+                    .clone();
 
-                let mut screensaver = match screensaver_type {
-                    screensaver::ScreenSaverType::Snow => Box::new(screensaver::SnowScreenSaver {
-                        models: Vec::new(),
-                    }),
+                let screensaver_type = match screensaver_name.as_str() {
+                    "snow" => ScreenSaverType::Snow,
+                    _ => {
+                        error!(
+                            "Unknown screensaver: \"{}\", defaulting to \"snow\"",
+                            screensaver_name
+                        );
+                        ScreenSaverType::Snow
+                    }
                 };
 
+                let mut screensaver = match screensaver_type {
+                    screensaver::ScreenSaverType::Snow => {
+                        Box::new(screensaver::SnowScreenSaver { models: Vec::new() })
+                    }
+                };
                 screensaver.setup(&device, &queue, &texture_bind_group_layout);
 
                 Self {
@@ -581,6 +588,7 @@ impl<'a> State<'a> {
         );
         self.screensaver.update(
             &self.device,
+            &self.queue,
             Instant::now().duration_since(self.last_updated),
         );
         self.background_color = self.screensaver.get_background_color();
@@ -589,13 +597,21 @@ impl<'a> State<'a> {
             if #[cfg(target_arch = "wasm32")] {
                 let size_x = web_sys::window().unwrap().inner_width().unwrap().as_f64().unwrap();
                 let size_y = web_sys::window().unwrap().inner_height().unwrap().as_f64().unwrap();
-                let scale = web_sys::window().unwrap().device_pixel_ratio();
-                
+                //let scale = web_sys::window().unwrap().device_pixel_ratio();
+                let scale = 1.0;
+
                 let  _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(size_x / scale, size_y / scale));
+
                 let _ = self.window.canvas().unwrap().style().set_property(
                     "transform",
                     &*format! {"scale({})", scale},
                 );
+
+                if self.window.fullscreen().is_some() {
+                    self.window.set_cursor_visible(false);
+                } else {
+                    self.window.set_cursor_visible(true);
+                }
             }
         }
         self.last_updated = Instant::now();
@@ -642,7 +658,7 @@ impl<'a> State<'a> {
             for model in self.screensaver.get_models() {
                 render_pass.set_bind_group(0, &model.material.bind_group, &[]);
                 use model::DrawModel;
-                render_pass.draw_mesh_instanced(&model.mesh, 0..model.mesh.instances.len() as u32);
+                render_pass.draw_mesh_instanced(&model.mesh, 0..model.mesh.instance_count() as u32);
             }
         }
 
@@ -654,16 +670,15 @@ impl<'a> State<'a> {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub async fn run() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
-        } else {
-            env_logger::init();
-        }
+    #[cfg(target_arch = "wasm32")]
+    {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
     }
+
+    log::info!("Starting main loop");
     let event_loop = EventLoop::new().unwrap();
 
     cfg_if::cfg_if! {
@@ -673,97 +688,137 @@ pub async fn run() {
                 .map_err(|_| ())
                 .unwrap();
             let window = WindowBuilder::new()
-                //.with_fullscreen(Some(Fullscreen::Borderless(None)))
                 .with_canvas(Some(canvas))
                 .build(&event_loop).unwrap();
             }
         else {
             let window = WindowBuilder::new()
                 .with_fullscreen(Some(Fullscreen::Borderless(None)))
-                //.with_visible(false)
                 .build(&event_loop).unwrap();
             window.set_cursor_visible(false);
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        // Winit prevents sizing with CSS, so we have to set
-        // the size manually when on web.
-        use winit::dpi::PhysicalSize;
-        let _ = window.request_inner_size(PhysicalSize::new(450, 400));
-    }
-    let mut state = State::new(&window).await;
+    let config = get_config();
 
-    let result = event_loop
-        .run(move |event, control_flow| {
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id,
-                } if window_id == state.window().id() => {
-                    if !state.input(event) {
-                        match event {
-                            WindowEvent::CloseRequested
-                            | WindowEvent::MouseInput {
-                                state: ElementState::Pressed,
-                                ..
-                            }
-                            | WindowEvent::KeyboardInput {
-                                event:
-                                    KeyEvent {
-                                        state: ElementState::Pressed,
-                                        ..
-                                    },
-                                ..
-                            } => {
-                                //exit the screensaver when any key is pressed, but not on the web (duh)
-                                #[cfg(not(target_arch="wasm32"))]
-                                control_flow.exit()
-                            },
-                            WindowEvent::Resized(physical_size) => {
-                                state.resize(*physical_size);
-                            }
-                            WindowEvent::RedrawRequested => {
-                                // This tells winit that we want another frame after this one
-                                state.window().request_redraw();
+    let mut state = State::new(&window, config).await;
 
-                                state.window().set_visible(true);
+    let result = event_loop.run(move |event, control_flow| {
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } /*if window_id == state.window().id()*/ => {
+                if !state.input(event) && window_id == state.window().id() {
+                    match event {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        WindowEvent::CloseRequested
+                        | WindowEvent::MouseInput {
+                            state: ElementState::Pressed,
+                            ..
+                        } => control_flow.exit(),
+                        #[cfg(not(debug_assertions))]
+                        #[cfg(not(target_arch = "wasm32"))]
+                        WindowEvent::KeyboardInput {
+                            event,
+                            is_synthetic: false,
+                            ..
+                        } => {
+                            //exit the screensaver when any key is pressed, but not on the web (duh)
+                            log::debug!("{:?}", event);
 
-                                /*
-                                if !surface_configured {
-                                    return;
-                                }*/
-
-                                state.update();
-                                match state.render() {
-                                    Ok(_) => {}
-                                    // Reconfigure the surface if it's lost or outdated
-                                    Err(
-                                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated,
-                                    ) => state.resize(state.size),
-                                    // The system is out of memory, we should probably quit
-                                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                                        log::error!("OutOfMemory");
-                                        control_flow.exit();
+                            if event.state == ElementState::Pressed {
+                                //stupid windows sending a stupid random key event at the start of the program
+                                if cfg!(target_os = "windows") {
+                                    match event.logical_key {
+                                        Key::Named(NamedKey::AltGraph) => {}
+                                        _ => control_flow.exit(),
                                     }
-
-                                    // This happens when the a frame takes too long to present
-                                    Err(wgpu::SurfaceError::Timeout) => {
-                                        log::warn!("Surface timeout")
-                                    },
-                                    Err(wgpu::SurfaceError::Other) => {
-                                        log::error!("Other render error ¯\\_(ツ)_/¯")
-                                    }
+                                } else {
+                                    control_flow.exit()
                                 }
                             }
-                            _ => {}
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    state: ElementState::Pressed,
+                                    logical_key,
+                                    ..
+                                },
+                            ..
+                        } => match logical_key {
+                            Key::Named(NamedKey::Escape) => {
+                                state.window.set_fullscreen(None);
+                            }
+                            Key::Named(NamedKey::F11) => {
+                                state
+                                    .window
+                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            }
+                            Key::Character(char) if char == "f" => {
+                                state
+                                    .window
+                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            }
+                            _ => {}
+                        },
+                        #[cfg(target_arch = "wasm32")]
+                        WindowEvent::MouseInput {
+                            button: MouseButton::Left,
+                            state: ElementState::Pressed,
+                            ..
+                        }
+                        | WindowEvent::Touch(..) => {
+                            state
+                                .window
+                                .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                        }
+
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
+                        }
+                        WindowEvent::RedrawRequested => {
+                            // This tells winit that we want another frame after this one
+                            state.window().request_redraw();
+
+                            state.window().set_visible(true);
+
+                            /*
+                            if !surface_configured {
+                                return;
+                            }*/
+
+                            state.update();
+                            match state.render() {
+                                Ok(_) => {}
+                                // Reconfigure the surface if it's lost or outdated
+                                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                                    state.resize(state.size)
+                                }
+                                // The system is out of memory, we should probably quit
+                                Err(wgpu::SurfaceError::OutOfMemory) => {
+                                    log::error!("OutOfMemory");
+                                    control_flow.exit();
+                                }
+
+                                // This happens when the a frame takes too long to present
+                                Err(wgpu::SurfaceError::Timeout) => {
+                                    log::warn!("Surface timeout")
+                                }
+                                Err(wgpu::SurfaceError::Other) => {
+                                    log::error!("Other render error ¯\\_(ツ)_/¯")
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
-        });
+            _ => {}
+        }
+    });
     match result {
         Ok(_) => {
             log::info!("Window closed without errors");
