@@ -1,5 +1,54 @@
-pub trait Instance {
-    fn to_raw(&self) -> InstanceRaw;
+#![allow(dead_code)]
+
+use crate::util::{Position2, Position3};
+use cgmath::num_traits::float::FloatCore;
+use std::ops::Add;
+use std::time::Duration;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Instance {
+    pub(crate) position: cgmath::Vector3<f32>,
+    //rotation: cgmath::Quaternion<f32>,
+    pub(crate) color: wgpu::Color,
+    pub(crate) scale: f32,
+    pub(crate) age: Duration,
+}
+
+impl Instance {
+    pub(crate) fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            position: self.position.into(),
+            //model: Matrix4::from_translation(Vector3::zero()).into(),
+            color: [
+                self.color.r as f32,
+                self.color.g as f32,
+                self.color.b as f32,
+                self.color.a as f32,
+            ],
+            //velocity: self.velocity.into(),
+            scale: self.scale,
+        }
+    }
+
+    pub fn update(&mut self, delta_time: Duration) {
+        self.age = self.age.add(delta_time);
+    }
+}
+
+impl Position2 for Instance {
+    fn x(&self) -> f32 {
+        self.position.x
+    }
+
+    fn y(&self) -> f32 {
+        self.position.y
+    }
+}
+
+impl Position3 for Instance {
+    fn z(&self) -> f32 {
+        self.position.z
+    }
 }
 
 #[repr(C)]

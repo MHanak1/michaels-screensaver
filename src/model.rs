@@ -1,14 +1,17 @@
-use crate::particle::{ParticleInstance, ParticleSystem, ParticleSystemData};
+#![allow(dead_code)]
+
+use crate::instance::{Instance, InstanceRaw};
 use crate::texture;
+use cgmath::Vector3;
+use downcast_rs::Downcast;
+use std::any::Any;
 use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
-use cgmath::Vector3;
+use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
-use wgpu::{Color, Queue};
 use wgpu::util::DeviceExt;
-use crate::instance::Instance;
+use wgpu::{Color, Queue};
 
 pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
@@ -104,20 +107,20 @@ impl Material {
     }
 }
 
-pub trait Mesh: DrawMesh {
+pub trait Mesh: DrawMesh + Downcast {
     fn rebuild_instance_buffer(&mut self, device: &wgpu::Device);
     fn update_instance_buffer(&mut self, queue: &Queue);
     fn instance_count(&self) -> usize;
-    fn instances_mut(&mut self) -> &mut Vec<Box<ParticleInstance>>;
-    fn set_instances(&mut self, instances: Vec<Box<ParticleInstance>>);
-    fn update(&mut self, delta_t: Duration, queue: &Queue);
+    fn instances(&mut self) -> &mut Vec<Instance>;
+    //fn set_instances(&mut self, instances: Vec<Box<dyn Instance>>);
+    fn update(&mut self, _delta_t: Duration, _queue: &Queue);
 }
 
 pub struct ModelMesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub instances: Vec<Box<ParticleInstance>>,
+    pub instances: Vec<Instance>,
     pub num_elements: u32,
 }
 
@@ -127,7 +130,7 @@ impl ModelMesh {
         height: f32,
         position: Vector3<f32>,
         device: &wgpu::Device,
-    ) -> anyhow::Result<ModelMesh> {
+    ) -> impl Mesh {
         let vertices = &[
             ModelVertex {
                 position: [-width / 2.0, -height / 2.0, 0.0],
@@ -149,18 +152,16 @@ impl ModelMesh {
 
         let indices: &[u32] = &[0, 1, 2, 1, 3, 2];
 
-        let instances = vec![Box::new(ParticleInstance {
+        let instances: Vec<Instance> = vec![Instance {
             position,
             color: Color::WHITE,
-            velocity: Vector3::new(0.0, 0.0, 0.0),
             scale: 1.0,
-        })];
+            age: Duration::new(0, 0),
+        }];
 
         let instance_data = instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|model_instance: &Instance| model_instance.to_raw())
             .collect::<Vec<_>>();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -180,13 +181,13 @@ impl ModelMesh {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        Ok(ModelMesh {
+        ModelMesh {
             vertex_buffer,
             index_buffer,
             instances,
             instance_buffer,
             num_elements: indices.len() as u32,
-        })
+        }
     }
 }
 
@@ -195,9 +196,7 @@ impl Mesh for ModelMesh {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|instance: &Instance| instance.to_raw())
             .collect::<Vec<_>>();
 
         self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -210,9 +209,7 @@ impl Mesh for ModelMesh {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|particle_instance: &Instance| particle_instance.to_raw())
             .collect::<Vec<_>>();
 
         queue.write_buffer(
@@ -226,16 +223,15 @@ impl Mesh for ModelMesh {
         self.instances.len()
     }
 
-    fn instances_mut(&mut self) -> &mut Vec<Box<ParticleInstance>> {
+    fn instances(&mut self) -> &mut Vec<Instance> {
         &mut self.instances
     }
 
-    fn set_instances(&mut self, instances: Vec<Box<ParticleInstance>>) {
-        self.instances = instances;
-    }
-
     fn update(&mut self, delta_t: Duration, queue: &Queue) {
-        //do nothing
+        for instance in self.instances.iter_mut() {
+            instance.update(delta_t)
+        }
+        self.update_instance_buffer(queue);
     }
 }
 

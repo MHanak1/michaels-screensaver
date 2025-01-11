@@ -30,6 +30,7 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
     out.tex_coords = model.tex_coords;
+    //out.clip_position[3] *= 0.01;
     out.clip_position = camera.view_proj * vec4<f32>(instance.position + model.position * instance.scale, 1.0); // 2.
     out.color = instance.color;
     return out;

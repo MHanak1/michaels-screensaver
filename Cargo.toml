@@ -22,7 +22,9 @@ rand = "0.8.5"
 web-time = "1.1.0"
 config = "0.15.4"
 dirs = "5.0.1"
-lazy_static = "1.5.0"
+downcast-rs = "2.0.1"
+prisma = "0.1.1"
+angular-units = "0.2.4"
 
 [dependencies.image]
 version = "0.24"

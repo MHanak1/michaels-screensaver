@@ -1,7 +1,6 @@
 mod instance;
 mod model;
 mod particle;
-mod resource;
 mod screensaver;
 mod shaders;
 mod texture;
@@ -20,22 +19,29 @@ use winit::platform::web::WindowExtWebSys;
 
 use crate::instance::InstanceRaw;
 use crate::screensaver::{ScreenSaver, ScreenSaverType};
-use cfg_if::cfg_if;
 use cgmath::prelude::*;
-use cgmath::{Matrix4, Vector3};
+use cgmath::Matrix4;
 use config::{Config, FileFormat};
-use image::GenericImageView;
 use log::error;
 use model::Vertex;
 use std::collections::{HashMap, HashSet};
-use std::ops::Add;
+use std::ops::Deref;
+use std::sync::{LockResult, Mutex};
+use std::thread;
 use wgpu::util::DeviceExt;
 use wgpu::Limits;
-use winit::error::EventLoopError;
-use winit::event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent};
+use winit::dpi::{LogicalSize, Size};
+use winit::event;
+#[cfg(debug_assertions)]
+#[cfg(not(target_arch = "wasm32"))]
+use winit::event::KeyEvent;
+use winit::event::{ElementState, Event, TouchPhase, WindowEvent};
+#[cfg(target_arch = "wasm32")]
+use winit::event::{KeyEvent, MouseButton};
+
 use winit::event_loop::EventLoop;
-use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey, SmolStr};
-use winit::window::{Fullscreen, Window, WindowAttributes, WindowBuilder};
+use winit::keyboard::{Key, NamedKey};
+use winit::window::{Fullscreen, Window, WindowBuilder};
 
 pub const DEFAULT_CONFIG: &[u8] = include_bytes!("resources/default_config.toml");
 
@@ -120,6 +126,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.0, 1.0,
 );
 
+#[allow(dead_code)]
 enum CameraType {
     Perspective(f32),
     Orthographic(),
@@ -168,7 +175,6 @@ impl CameraController {
     }
 
     fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
         let move_delta = 0.1;
 
         for key in self.pressed_keys.iter() {
@@ -384,7 +390,6 @@ impl<'a> State<'a> {
                     camera_type: CameraType::Perspective(45.0),
                 };
 
-
                 let camera_controller = CameraController::new();
 
                 let camera_bind_group_layout =
@@ -495,14 +500,16 @@ impl<'a> State<'a> {
                     });
 
                 let screensaver_name = screensaver_config
+                    .clone()
                     .try_deserialize::<HashMap<String, String>>()
                     .unwrap()
                     .get("screensaver")
                     .unwrap_or(&"snow".to_string())
                     .clone();
 
-                let screensaver_type = match screensaver_name.as_str() {
+                let screensaver_type: ScreenSaverType = match screensaver_name.as_str() {
                     "snow" => ScreenSaverType::Snow,
+                    "circles" => ScreenSaverType::Balls,
                     _ => {
                         error!(
                             "Unknown screensaver: \"{}\", defaulting to \"snow\"",
@@ -512,12 +519,22 @@ impl<'a> State<'a> {
                     }
                 };
 
-                let mut screensaver = match screensaver_type {
-                    screensaver::ScreenSaverType::Snow => {
-                        Box::new(screensaver::SnowScreenSaver { models: Vec::new() })
-                    }
+                let mut screensaver: Box<dyn ScreenSaver> = match screensaver_type {
+                    ScreenSaverType::Snow => Box::new(screensaver::SnowScreenSaver::new(
+                        screensaver_config.clone(),
+                    )),
+                    ScreenSaverType::Balls => Box::new(screensaver::BallScreenSaver::new(
+                        screensaver_config.clone(),
+                    )),
                 };
-                screensaver.setup(&device, &queue, &texture_bind_group_layout);
+
+                screensaver.setup(
+                    Size::from(size),
+                    screensaver_config.clone(),
+                    &device,
+                    &queue,
+                    &texture_bind_group_layout,
+                );
 
                 Self {
                     window,
@@ -558,18 +575,50 @@ impl<'a> State<'a> {
         }
         self.depth_texture =
             texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+        self.screensaver.resize(
+            self.camera.ratio,
+            new_size.width as f32 / new_size.height as f32,
+        );
         self.camera.ratio = new_size.width as f32 / new_size.height as f32;
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
         if !self.camera_controller.process_events(event) {
-            match self.screensaver_type {
-                ScreenSaverType::Snow => match event {
-                    WindowEvent::CursorMoved { position, .. } => {
-                        self.camera.target.x = -(position.x as f32 / self.size.width as f32) + 0.5;
-                        self.camera.target.y = (position.y as f32 / self.size.height as f32) - 0.5;
-                        false
-                    }
+            match event {
+                WindowEvent::CursorMoved { position, .. } => self.screensaver.handle_input(
+                    [
+                        -(position.x as f32 / self.size.width as f32) * 2.0 + 1.0,
+                        (position.y as f32 / self.size.height as f32) * 2.0 - 1.0,
+                    ],
+                    0,
+                    true,
+                ),
+                WindowEvent::Touch(touch) => {
+                    let position = touch.location;
+                    self.screensaver.handle_input(
+                        [
+                            -(position.x as f32 / self.size.width as f32) * 2.0 + 1.0,
+                            (position.y as f32 / self.size.height as f32) * 2.0 - 1.0,
+                        ],
+                        touch.id + 1,
+                        match touch.phase {
+                            TouchPhase::Ended => false,
+                            TouchPhase::Cancelled => false,
+                            _ => true,
+                        },
+                    )
+                }
+                _ => match self.screensaver_type {
+                    ScreenSaverType::Snow => match event {
+                        WindowEvent::CursorMoved { position, .. } => {
+                            self.camera.target.x =
+                                -(position.x as f32 / self.size.width as f32) + 0.5;
+                            self.camera.target.y =
+                                (position.y as f32 / self.size.height as f32) - 0.5;
+                            false
+                        }
+                        _ => false,
+                    },
                     _ => false,
                 },
             }
@@ -586,7 +635,9 @@ impl<'a> State<'a> {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+        let last_updated = Instant::now();
         self.screensaver.update(
+            Size::from(self.size),
             &self.device,
             &self.queue,
             Instant::now().duration_since(self.last_updated),
@@ -614,7 +665,7 @@ impl<'a> State<'a> {
                 }
             }
         }
-        self.last_updated = Instant::now();
+        self.last_updated = last_updated;
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -636,6 +687,7 @@ impl<'a> State<'a> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(self.background_color),
+                        //load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -651,15 +703,7 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
 
-            // lib.rmesh.in
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-
-            for model in self.screensaver.get_models() {
-                render_pass.set_bind_group(0, &model.material.bind_group, &[]);
-                use model::DrawModel;
-                render_pass.draw_mesh_instanced(&model.mesh, 0..model.mesh.instance_count() as u32);
-            }
+            self.screensaver.render(&mut render_pass, self);
         }
 
         // submit will accept anything that implements IntoIter
@@ -695,7 +739,7 @@ pub async fn run() {
             let window = WindowBuilder::new()
                 .with_fullscreen(Some(Fullscreen::Borderless(None)))
                 .build(&event_loop).unwrap();
-            window.set_cursor_visible(false);
+            //window.set_cursor_visible(false);
         }
     }
 
@@ -703,7 +747,7 @@ pub async fn run() {
 
     let mut state = State::new(&window, config).await;
 
-    let result = event_loop.run(move |event, control_flow| {
+    let result = event_loop.run(|event, control_flow| {
         match event {
             Event::WindowEvent {
                 ref event,
@@ -742,11 +786,11 @@ pub async fn run() {
                         #[cfg(target_arch = "wasm32")]
                         WindowEvent::KeyboardInput {
                             event:
-                                KeyEvent {
-                                    state: ElementState::Pressed,
-                                    logical_key,
-                                    ..
-                                },
+                            KeyEvent {
+                                state: ElementState::Pressed,
+                                logical_key,
+                                ..
+                            },
                             ..
                         } => match logical_key {
                             Key::Named(NamedKey::Escape) => {
@@ -780,9 +824,7 @@ pub async fn run() {
                             state.resize(*physical_size);
                         }
                         WindowEvent::RedrawRequested => {
-                            // This tells winit that we want another frame after this one
                             state.window().request_redraw();
-
                             state.window().set_visible(true);
 
                             /*
@@ -795,11 +837,11 @@ pub async fn run() {
                                 Ok(_) => {}
                                 // Reconfigure the surface if it's lost or outdated
                                 Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                                    state.resize(state.size)
+                                    state.resize(window.inner_size())
                                 }
                                 // The system is out of memory, we should probably quit
                                 Err(wgpu::SurfaceError::OutOfMemory) => {
-                                    log::error!("OutOfMemory");
+                                    log::error!("Out Of Memory");
                                     control_flow.exit();
                                 }
 
@@ -819,6 +861,7 @@ pub async fn run() {
             _ => {}
         }
     });
+
     match result {
         Ok(_) => {
             log::info!("Window closed without errors");

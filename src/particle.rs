@@ -1,21 +1,27 @@
-use crate::util::BoundingBox;
+#![allow(dead_code)]
+
 use crate::instance::{Instance, InstanceRaw};
 use crate::model::{DrawMesh, Mesh, ModelVertex};
+use crate::util::{BoundingBox, BoundingBoxType, InstanceContainer};
+use cgmath::{Vector2, Vector3, Zero};
+use std::any::Any;
 use std::ops::{Add, Mul, Range};
 use std::time::Duration;
-use cgmath::Vector3;
 use wgpu::util::DeviceExt;
 use wgpu::{Color, Queue};
-use rand::random;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParticleData {
+    pub velocity: Vector3<f32>,
+    pub collider: Option<Vector2<f32>>,
+}
 
 pub struct ParticleSystemData {
-    domain: BoundingBox<f32>,
+    pub domain: BoundingBox<f32>,
 }
 impl ParticleSystemData {
     pub fn new(domain: BoundingBox<f32>) -> Self {
-        ParticleSystemData {
-            domain
-        }
+        ParticleSystemData { domain }
     }
 }
 
@@ -23,7 +29,8 @@ pub struct ParticleSystem {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub instances: Vec<Box<ParticleInstance>>,
+    pub instances: InstanceContainer<Instance>,
+    pub particle_data: Vec<ParticleData>,
     pub particle_system_data: ParticleSystemData,
     pub num_elements: u32,
 }
@@ -35,7 +42,7 @@ impl ParticleSystem {
         position: Vector3<f32>,
         particle_system_data: ParticleSystemData,
         device: &wgpu::Device,
-    ) -> anyhow::Result<ParticleSystem> {
+    ) -> ParticleSystem {
         let vertices = &[
             ModelVertex {
                 position: [-width / 2.0, -height / 2.0, 0.0],
@@ -57,18 +64,15 @@ impl ParticleSystem {
 
         let indices: &[u32] = &[0, 1, 2, 1, 3, 2];
 
-        let instances = vec![Box::new(ParticleInstance {
-            position,
-            color: Color::WHITE,
-            velocity: Vector3::new(0.0, 0.0, 0.0),
-            scale: 1.0,
-        })];
+        let instances = vec![];
+        let particle_data = vec![ParticleData {
+            velocity: Vector3::zero(),
+            collider: Option::from(Vector2::new(width, height)), //cheeky hack to transfer the width and height to the population routine
+        }];
 
         let instance_data = instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -88,21 +92,21 @@ impl ParticleSystem {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        Ok(ParticleSystem {
+        ParticleSystem {
             vertex_buffer,
             index_buffer,
-            instances,
+            instances: InstanceContainer::new(instances, 1, 1),
+            particle_data,
             instance_buffer,
             num_elements: indices.len() as u32,
             particle_system_data,
-        })
+        }
     }
     pub fn populate_random(&mut self, instance_count: usize, device: &wgpu::Device) {
-        self.instances = Vec::with_capacity(instance_count);
+        self.instances.instances = Vec::with_capacity(instance_count);
 
-
-        for i in 0..7500 {
-            let mut position = self.particle_system_data.domain.random_pos();
+        for _ in 0..instance_count {
+            let position = self.particle_system_data.domain.random_pos();
 
             let new_color = wgpu::Color {
                 r: 1.0,
@@ -111,13 +115,17 @@ impl ParticleSystem {
                 a: 1.0,
             };
 
-            self.instances.push(Box::new(ParticleInstance {
+            self.instances.push(Instance {
                 position,
                 color: new_color,
-                velocity: Vector3::new(0.0, 0.0, 0.0),
                 //velocity: Vector3::new(0.0, 0.0, 0.0),
                 scale: 1.0,
-            }));
+                age: Duration::new(0, 0),
+            });
+            self.particle_data.push(ParticleData {
+                velocity: Vector3::zero(),
+                collider: self.particle_data[0].collider,
+            });
         }
         self.rebuild_instance_buffer(device);
     }
@@ -128,9 +136,7 @@ impl Mesh for ParticleSystem {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -143,9 +149,7 @@ impl Mesh for ParticleSystem {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Box<ParticleInstance>| {
-                ParticleInstance::to_raw(particle_instance)
-            })
+            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         queue.write_buffer(
@@ -159,20 +163,75 @@ impl Mesh for ParticleSystem {
         self.instances.len()
     }
 
-    fn instances_mut(&mut self) -> &mut Vec<Box<ParticleInstance>> {
-        &mut self.instances
-    }
-
-    fn set_instances(&mut self, instances: Vec<Box<ParticleInstance>>) {
-        self.instances = instances;
+    fn instances(&mut self) -> &mut Vec<Instance> {
+        &mut self.instances.instances
     }
 
     fn update(&mut self, delta_t: Duration, queue: &Queue) {
-        for instance in self.instances.iter_mut() {
-            let v_multiplier = delta_t.as_secs_f32() * instance.scale;
-            let mut new_pos = instance.position.add(instance.velocity.mul(v_multiplier));
-
-            instance.position = self.particle_system_data.domain.modulo_pos(new_pos);
+        for i in 0..self.instances.len() {
+            let instance = &mut self.instances[i];
+            if i < self.particle_data.len() {
+                let data = &mut self.particle_data[i];
+                instance.update(delta_t);
+                match self.particle_system_data.domain.bound_type() {
+                    BoundingBoxType::Clamp => {
+                        instance.position = self.particle_system_data.domain.clamp_pos(
+                            instance
+                                .position
+                                .add(data.velocity.mul(delta_t.as_secs_f32())),
+                        );
+                    }
+                    BoundingBoxType::Modulo => {
+                        instance.position = self.particle_system_data.domain.modulo_pos(
+                            instance
+                                .position
+                                .add(data.velocity.mul(delta_t.as_secs_f32())),
+                        );
+                    }
+                    BoundingBoxType::Bounce => {
+                        let collider = match data.collider {
+                            None => Vector2::zero(),
+                            Some(collider) => collider,
+                        };
+                        if self.particle_system_data.domain.min_pos.x - instance.position.x
+                            > -instance.scale * collider.x / 2.0
+                        {
+                            data.velocity.x = data.velocity.x.abs();
+                        } else if self.particle_system_data.domain.max_pos.x - instance.position.x
+                            < instance.scale * collider.x / 2.0
+                        {
+                            data.velocity.x = -data.velocity.x.abs();
+                        }
+                        if self.particle_system_data.domain.min_pos.y - instance.position.y
+                            > -instance.scale * collider.y / 2.0
+                        {
+                            data.velocity.y = data.velocity.y.abs();
+                        } else if self.particle_system_data.domain.max_pos.y - instance.position.y
+                            < instance.scale * collider.y / 2.0
+                        {
+                            data.velocity.y = -data.velocity.y.abs();
+                        }
+                        if self.particle_system_data.domain.min_pos.z - instance.position.z > 0.0 {
+                            data.velocity.z = data.velocity.z.abs();
+                        } else if self.particle_system_data.domain.max_pos.z - instance.position.z
+                            < 0.0
+                        {
+                            data.velocity.z = -data.velocity.z.abs();
+                        }
+                        instance.position = self.particle_system_data.domain.clamp_pos(
+                            instance
+                                .position
+                                .add(data.velocity.mul(delta_t.as_secs_f32())),
+                        );
+                    }
+                    BoundingBoxType::Ignore => {
+                        instance.position = instance
+                            .position
+                            .add(data.velocity.mul(delta_t.as_secs_f32()));
+                    }
+                }
+            }
+            instance.age = instance.age + delta_t;
         }
         //model.mesh.rebuild_instance_buffer(device);
         self.update_instance_buffer(queue);
@@ -185,30 +244,5 @@ impl DrawMesh for ParticleSystem {
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         pass.draw_indexed(0..self.num_elements, 0, instances);
-    }
-}
-
-pub struct ParticleInstance {
-    pub(crate) position: cgmath::Vector3<f32>,
-    //rotation: cgmath::Quaternion<f32>,
-    pub(crate) color: wgpu::Color,
-    pub(crate) velocity: cgmath::Vector3<f32>, //in case i wanted to update the position through a compute shader (don't know how yet)
-    pub(crate) scale: f32,
-}
-
-impl Instance for ParticleInstance {
-    fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            position: self.position.into(),
-            //model: Matrix4::from_translation(Vector3::zero()).into(),
-            color: [
-                self.color.r as f32,
-                self.color.g as f32,
-                self.color.b as f32,
-                self.color.a as f32,
-            ],
-            //velocity: self.velocity.into(),
-            scale: self.scale,
-        }
     }
 }

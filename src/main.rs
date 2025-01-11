@@ -1,11 +1,9 @@
 #![windows_subsystem = "windows"]
 
-use config::{Config, FileFormat};
 use michaels_screensaver::{get_config, run, DEFAULT_CONFIG};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 
 fn main() {
     let mut config_path = dirs::config_dir().unwrap().to_path_buf();
