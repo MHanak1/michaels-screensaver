@@ -1,6 +1,49 @@
 * {
-	transform-origin: top left;
-	image-rendering: pixelated;
+	transform-origin: top right;
+}
+
+.flex-row {
+	display: flex;
+	flex-direction: column;
+}
+.dropbtn {
+	background-color: #3498DB;
+	color: white;
+	padding: 16px;
+	font-size: 16px;
+	border: none;
+	cursor: pointer;
+}
+
+.dropbtn:hover, .dropbtn:focus {
+	background-color: #2980B9;
+}
+
+.dropdown {
+	position: fixed;
+	display: flex;
+	justify-content: right;
+	top: 0;
+	right: 0;
+}
+
+.dropdown-content {
+	display: none;
+	position: fixed;
+	margin-top: 54px;
+	width: min-content;
+	height: min-content;
+	background: #000000;
+	z-index: 1;
+}
+
+.show {display: flex;}
+
+@media screen and (min-width: 1000px) {
+	.flex-row {
+		display: flex;
+		flex-direction: row;
+	}
 }
 
 body {

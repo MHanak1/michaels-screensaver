@@ -103,8 +103,6 @@ impl ParticleSystem {
         }
     }
     pub fn populate_random(&mut self, instance_count: usize, device: &wgpu::Device) {
-        self.instances.instances = Vec::with_capacity(instance_count);
-
         for _ in 0..instance_count {
             let position = self.particle_system_data.domain.random_pos();
 
@@ -170,65 +168,68 @@ impl Mesh for ParticleSystem {
     fn update(&mut self, delta_t: Duration, queue: &Queue) {
         for i in 0..self.instances.len() {
             let instance = &mut self.instances[i];
-            if i < self.particle_data.len() {
-                let data = &mut self.particle_data[i];
-                instance.update(delta_t);
-                match self.particle_system_data.domain.bound_type() {
-                    BoundingBoxType::Clamp => {
-                        instance.position = self.particle_system_data.domain.clamp_pos(
-                            instance
-                                .position
-                                .add(data.velocity.mul(delta_t.as_secs_f32())),
-                        );
-                    }
-                    BoundingBoxType::Modulo => {
-                        instance.position = self.particle_system_data.domain.modulo_pos(
-                            instance
-                                .position
-                                .add(data.velocity.mul(delta_t.as_secs_f32())),
-                        );
-                    }
-                    BoundingBoxType::Bounce => {
-                        let collider = match data.collider {
-                            None => Vector2::zero(),
-                            Some(collider) => collider,
-                        };
-                        if self.particle_system_data.domain.min_pos.x - instance.position.x
-                            > -instance.scale * collider.x / 2.0
-                        {
-                            data.velocity.x = data.velocity.x.abs();
-                        } else if self.particle_system_data.domain.max_pos.x - instance.position.x
-                            < instance.scale * collider.x / 2.0
-                        {
-                            data.velocity.x = -data.velocity.x.abs();
-                        }
-                        if self.particle_system_data.domain.min_pos.y - instance.position.y
-                            > -instance.scale * collider.y / 2.0
-                        {
-                            data.velocity.y = data.velocity.y.abs();
-                        } else if self.particle_system_data.domain.max_pos.y - instance.position.y
-                            < instance.scale * collider.y / 2.0
-                        {
-                            data.velocity.y = -data.velocity.y.abs();
-                        }
-                        if self.particle_system_data.domain.min_pos.z - instance.position.z > 0.0 {
-                            data.velocity.z = data.velocity.z.abs();
-                        } else if self.particle_system_data.domain.max_pos.z - instance.position.z
-                            < 0.0
-                        {
-                            data.velocity.z = -data.velocity.z.abs();
-                        }
-                        instance.position = self.particle_system_data.domain.clamp_pos(
-                            instance
-                                .position
-                                .add(data.velocity.mul(delta_t.as_secs_f32())),
-                        );
-                    }
-                    BoundingBoxType::Ignore => {
-                        instance.position = instance
+            let data = &mut self.particle_data[i];
+            instance.update(delta_t);
+
+            if !instance.position[0].is_normal() {
+                instance.position = self.particle_system_data.domain.random_pos();
+            }
+
+            match self.particle_system_data.domain.bound_type() {
+                BoundingBoxType::Clamp => {
+                    instance.position = self.particle_system_data.domain.clamp_pos(
+                        instance
                             .position
-                            .add(data.velocity.mul(delta_t.as_secs_f32()));
+                            .add(data.velocity.mul(delta_t.as_secs_f32())),
+                    );
+                }
+                BoundingBoxType::Modulo => {
+                    instance.position = self.particle_system_data.domain.modulo_pos(
+                        instance
+                            .position
+                            .add(data.velocity.mul(delta_t.as_secs_f32())),
+                    );
+                }
+                BoundingBoxType::Bounce => {
+                    let collider = match data.collider {
+                        None => Vector2::zero(),
+                        Some(collider) => collider,
+                    };
+                    if self.particle_system_data.domain.min_pos.x - instance.position.x
+                        > -instance.scale * collider.x / 2.0
+                    {
+                        data.velocity.x = data.velocity.x.abs();
+                    } else if self.particle_system_data.domain.max_pos.x - instance.position.x
+                        < instance.scale * collider.x / 2.0
+                    {
+                        data.velocity.x = -data.velocity.x.abs();
                     }
+                    if self.particle_system_data.domain.min_pos.y - instance.position.y
+                        > -instance.scale * collider.y / 2.0
+                    {
+                        data.velocity.y = data.velocity.y.abs();
+                    } else if self.particle_system_data.domain.max_pos.y - instance.position.y
+                        < instance.scale * collider.y / 2.0
+                    {
+                        data.velocity.y = -data.velocity.y.abs();
+                    }
+                    if self.particle_system_data.domain.min_pos.z - instance.position.z > 0.0 {
+                        data.velocity.z = data.velocity.z.abs();
+                    } else if self.particle_system_data.domain.max_pos.z - instance.position.z
+                        < 0.0
+                    {
+                        data.velocity.z = -data.velocity.z.abs();
+                    }
+                    instance.position = self.particle_system_data.domain.clamp_pos(
+                        instance
+                            .position
+                            .add(data.velocity.mul(delta_t.as_secs_f32())),
+                    );
+                }
+                BoundingBoxType::Ignore => {
+                    instance.position = instance
+                        .position
+                        .add(data.velocity.mul(delta_t.as_secs_f32()));
                 }
             }
             instance.age = instance.age + delta_t;

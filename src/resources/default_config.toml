@@ -1,13 +1,16 @@
-#avaliable screensavers: snow, circles
-screensaver = "circles"
-#Snow
+#avaliable screensavers: snow, balls
+screensaver = "balls"
+fullscreen = true
 
-#Circles
-ball_speed = 0.2
-ball_count = 2000
-ball_size = 0.1
+[snow]
+snowflake_count = 7500
+
+[balls]
+speed = 0.2
+count = 1000
+size = 0.1
 #avaliable: random, color, temperature, infection
-color_mode = "random"
+color_mode = "temperature"
 #used for the density color mode. the determines what density is considered "high"
 show_density = false
 target_display_density = 10.0
@@ -15,5 +18,5 @@ target_display_density = 10.0
 color = "#ffffff"
 # larger regions mean more collision calculations, too many regions may impact performance. impacts density display
 # keep at 1.0 if you don't know what it does, do not set lower than 0.5, otherwise the simulation will start glitching
-region_size = 2.0
+region_size = 1.0
 correct_ball_velocity = true

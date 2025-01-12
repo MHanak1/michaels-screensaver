@@ -1,3 +1,4 @@
+pub mod configurator;
 mod instance;
 mod model;
 mod particle;
@@ -6,6 +7,7 @@ mod shaders;
 mod texture;
 mod util;
 
+use wgpu::BindGroupLayout;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
@@ -26,11 +28,12 @@ use log::error;
 use model::Vertex;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
-use std::sync::{LockResult, Mutex};
-use std::thread;
+use std::sync::{Arc, LazyLock, LockResult, Mutex};
+use std::{process, thread};
 use wgpu::util::DeviceExt;
 use wgpu::Limits;
 use winit::dpi::{LogicalSize, Size};
+use winit::error::EventLoopError;
 use winit::event;
 #[cfg(debug_assertions)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,8 +42,13 @@ use winit::event::{ElementState, Event, TouchPhase, WindowEvent};
 #[cfg(target_arch = "wasm32")]
 use winit::event::{KeyEvent, MouseButton};
 
-use winit::event_loop::EventLoop;
+use crate::configurator::{ConfigUI, Configurator};
+use winit::event_loop::{EventLoop, EventLoopBuilder};
 use winit::keyboard::{Key, NamedKey};
+#[cfg(target_os = "windows")]
+use winit::platform::windows::EventLoopBuilderExtWindows;
+#[cfg(target_os = "linux")]
+use winit::platform::x11::EventLoopBuilderExtX11;
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
 pub const DEFAULT_CONFIG: &[u8] = include_bytes!("resources/default_config.toml");
@@ -90,6 +98,29 @@ pub fn get_config() -> Config {
             FileFormat::Toml,
         ))
         .add_source(config::File::with_name(config_path.to_str().unwrap()))
+        .add_source(config::Environment::with_prefix("APP"))
+        .build()
+        .unwrap()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_default_config() -> Config {
+    Config::builder()
+        .add_source(config::File::from_str(
+            std::str::from_utf8(DEFAULT_CONFIG).expect("Failed to read the default config"),
+            FileFormat::Toml,
+        ))
+        .build()
+        .unwrap()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_default_config() -> Config {
+    Config::builder()
+        .add_source(config::File::from_str(
+            std::str::from_utf8(DEFAULT_CONFIG).expect("Failed to read the default config"),
+            FileFormat::Toml,
+        ))
         .add_source(config::Environment::with_prefix("APP"))
         .build()
         .unwrap()
@@ -255,11 +286,12 @@ struct State<'a> {
     screensaver: Box<dyn ScreenSaver>,
     screensaver_type: ScreenSaverType,
     last_updated: Instant,
+    texture_bind_group_layout: BindGroupLayout,
 }
 
 impl<'a> State<'a> {
     // Creating some of the wgpu types requires async code
-    async fn new(window: &'a Window, screensaver_config: Config) -> State<'a> {
+    async fn new(window: &'a Window, configurator: &Configurator) -> State<'a> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -499,38 +531,20 @@ impl<'a> State<'a> {
                         cache: None,
                     });
 
-                let screensaver_name = screensaver_config
-                    .clone()
-                    .try_deserialize::<HashMap<String, String>>()
-                    .unwrap()
-                    .get("screensaver")
-                    .unwrap_or(&"snow".to_string())
-                    .clone();
-
-                let screensaver_type: ScreenSaverType = match screensaver_name.as_str() {
-                    "snow" => ScreenSaverType::Snow,
-                    "circles" => ScreenSaverType::Balls,
-                    _ => {
-                        error!(
-                            "Unknown screensaver: \"{}\", defaulting to \"snow\"",
-                            screensaver_name
-                        );
-                        ScreenSaverType::Snow
-                    }
-                };
+                let screensaver_type = &configurator.screensaver;
 
                 let mut screensaver: Box<dyn ScreenSaver> = match screensaver_type {
-                    ScreenSaverType::Snow => Box::new(screensaver::SnowScreenSaver::new(
-                        screensaver_config.clone(),
-                    )),
-                    ScreenSaverType::Balls => Box::new(screensaver::BallScreenSaver::new(
-                        screensaver_config.clone(),
-                    )),
+                    ScreenSaverType::Snow => {
+                        Box::new(screensaver::SnowScreenSaver::new(configurator.clone()))
+                    }
+                    ScreenSaverType::Balls => {
+                        Box::new(screensaver::BallScreenSaver::new(configurator.clone()))
+                    }
                 };
 
                 screensaver.setup(
                     Size::from(size),
-                    screensaver_config.clone(),
+                    &configurator,
                     &device,
                     &queue,
                     &texture_bind_group_layout,
@@ -551,8 +565,9 @@ impl<'a> State<'a> {
                     camera_uniform,
                     camera_buffer,
                     camera_bind_group,
+                    texture_bind_group_layout,
                     screensaver,
-                    screensaver_type,
+                    screensaver_type: screensaver_type.clone(),
                     last_updated: Instant::now(),
                 }
             }
@@ -627,7 +642,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, config: &Configurator) {
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(
@@ -636,27 +651,45 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
         let last_updated = Instant::now();
-        self.screensaver.update(
-            Size::from(self.size),
-            &self.device,
-            &self.queue,
-            Instant::now().duration_since(self.last_updated),
-        );
+        if self.screensaver_type != config.screensaver {
+            self.screensaver = match config.screensaver {
+                ScreenSaverType::Snow => Box::new(screensaver::SnowScreenSaver::new(*config)),
+                ScreenSaverType::Balls => Box::new(screensaver::BallScreenSaver::new(*config)),
+            };
+            self.screensaver_type = config.screensaver;
+            self.screensaver.setup(Size::from(self.size), config, &self.device, &self.queue, &self.texture_bind_group_layout)
+
+        }
+        self.screensaver.update(Size::from(self.size), config, &self.device, &self.queue, Instant::now().duration_since(self.last_updated));
         self.background_color = self.screensaver.get_background_color();
 
         cfg_if::cfg_if! {
             if #[cfg(target_arch = "wasm32")] {
-                let size_x = web_sys::window().unwrap().inner_width().unwrap().as_f64().unwrap();
-                let size_y = web_sys::window().unwrap().inner_height().unwrap().as_f64().unwrap();
-                //let scale = web_sys::window().unwrap().device_pixel_ratio();
-                let scale = 1.0;
+                let mut size_x = web_sys::window().unwrap().inner_width().unwrap().as_f64().unwrap();
+                let mut size_y = web_sys::window().unwrap().inner_height().unwrap().as_f64().unwrap();
 
-                let  _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(size_x / scale, size_y / scale));
+            let config_canvas = web_sys::window().unwrap().document().unwrap()
+                .get_element_by_id("config_canvas")
+                .expect("Failed to find config_canvas")
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .expect("config_canvas was not a HtmlCanvasElement");
 
+                let scale = web_sys::window().unwrap().device_pixel_ratio();
+
+                config_canvas.set_width((300.0 * web_sys::window().unwrap().device_pixel_ratio()) as u32);
+                config_canvas.set_height((400.0 * web_sys::window().unwrap().device_pixel_ratio()) as u32);
+                //config_canvas.set_width(300);
+                //config_canvas.set_height(300);
+
+                //config_canvas.style().set_property("transform", &*format! {"scale({})", 1.0/scale}).unwrap();
+
+                let  _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(size_x, size_y));
+
+                /*
                 let _ = self.window.canvas().unwrap().style().set_property(
                     "transform",
                     &*format! {"scale({})", scale},
-                );
+                );*/
 
                 if self.window.fullscreen().is_some() {
                     self.window.set_cursor_visible(false);
@@ -716,158 +749,246 @@ impl<'a> State<'a> {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub async fn run() {
+    let configurator = Configurator::from_config(get_config());
+    let configurator = Arc::new(Mutex::new(configurator));
+    run_with_config(configurator).await;
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg(target_arch = "wasm32")]
+pub async fn run_with_config_window() {
+    let configurator = Configurator::from_config(get_config());
+    let configurator = Arc::new(Mutex::new(configurator));
+    let config_ui = ConfigUI {
+        configurator: Arc::clone(&configurator),
+    };
+
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        run_with_config(configurator).await;
+    });
+
+    let document = web_sys::window()
+        .expect("No window")
+        .document()
+        .expect("No document");
+
+    let canvas = document
+        .get_element_by_id("config_canvas")
+        .expect("Failed to find config_canvas")
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .expect("config_canvas was not a HtmlCanvasElement");
+
+    let start_result = eframe::WebRunner::new()
+        .start(
+            canvas,
+            web_options,
+            Box::new(|cc| Ok(Box::new(config_ui))),
+        )
+        .await;
+
+}
+
+pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
     #[cfg(target_arch = "wasm32")]
     {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
         console_log::init_with_level(log::Level::Warn).expect("Couldn't initialize logger");
     }
+    {
+        log::info!("Starting main loop");
+        #[cfg(target_arch = "wasm32")]
+        let event_loop: Result<EventLoop<()>, EventLoopError> = EventLoopBuilder::default()
+            .build();
+        #[cfg(not(target_arch = "wasm32"))]
+        let event_loop: Result<EventLoop<()>, EventLoopError> = EventLoopBuilder::default()
+            .with_any_thread(true)
+            .build();
 
-    log::info!("Starting main loop");
-    let event_loop = EventLoop::new().unwrap();
+        match event_loop {
+            Ok(event_loop) => {
+                let window = match configurator.lock() {
+                    Ok(mut configurator) => {
+                        cfg_if::cfg_if! {
+                            if #[cfg(target_arch = "wasm32")] {
+                                let canvas = web_sys::window().unwrap().document().unwrap().get_element_by_id("screensaver").unwrap()
+                                    .dyn_into::<web_sys::HtmlCanvasElement>()
+                                    .map_err(|_| ())
+                                    .unwrap();
+                                WindowBuilder::new()
+                                    .with_canvas(Some(canvas))
+                                    .build(&event_loop).unwrap()
+                                }
+                            else {
+                                if configurator.fullscreen && !configurator.preview_window {
+                                    WindowBuilder::new()
+                                    .with_fullscreen(Some(Fullscreen::Borderless(None)))
+                                    .build(&event_loop).unwrap()
+                                } else if configurator.preview_window {
+                                    WindowBuilder::new()
+                                    .build(&event_loop).unwrap()
+                                }
+                                else {
+                                    WindowBuilder::new()
+                                        .build(&event_loop).unwrap()
+                                }
+                                //window.set_cursor_visible(false);
+                            }
+                        }
+                    }
+                    Err(e) => panic!("failed to lock configurator: {}", e),
+                };
 
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            let canvas = web_sys::window().unwrap().document().unwrap().get_element_by_id("screensaver").unwrap()
-                .dyn_into::<web_sys::HtmlCanvasElement>()
-                .map_err(|_| ())
-                .unwrap();
-            let window = WindowBuilder::new()
-                .with_canvas(Some(canvas))
-                .build(&event_loop).unwrap();
-            }
-        else {
-            let window = WindowBuilder::new()
-                .with_fullscreen(Some(Fullscreen::Borderless(None)))
-                .build(&event_loop).unwrap();
-            //window.set_cursor_visible(false);
-        }
-    }
+                let mut state = match configurator.lock() {
+                    Ok(mut configurator) => {
+                        State::new(&window, &configurator).await
+                    }
+                    Err(e) => panic!("failed to lock configurator: {}", e),
+                };
 
-    let config = get_config();
+                let result = event_loop.run(|event, control_flow| {
+                    match configurator.lock() {
+                        Ok(mut configurator) => {
+                            match event {
+                                Event::WindowEvent {
+                                    ref event,
+                                    window_id,
+                                } /*if window_id == state.window().id()*/ => {
+                                    if !state.input(event) && window_id == state.window().id() {
+                                        match event {
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            WindowEvent::CloseRequested => {
+                                                if !configurator.preview_window {
+                                                    control_flow.exit();
+                                                    process::exit(0);
+                                                }
+                                            }
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            WindowEvent::MouseInput {
+                                                state: ElementState::Pressed,
+                                                ..
+                                            } => {
+                                                if configurator.fullscreen && !configurator.preview_window {
+                                                    control_flow.exit();
+                                                    process::exit(0);
+                                                }
+                                            },
+                                            //#[cfg(not(debug_assertions))]
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            WindowEvent::KeyboardInput {
+                                                event,
+                                                is_synthetic: false,
+                                                ..
+                                            } => {
+                                                //exit the screensaver when any key is pressed, but not on the web (duh)
+                                                log::debug!("{:?}", event);
 
-    let mut state = State::new(&window, config).await;
+                                                if event.state == ElementState::Pressed {
+                                                    //stupid windows sending a stupid random key event at the start of the program
+                                                    if cfg!(target_os = "windows") {
+                                                        match event.logical_key {
+                                                            Key::Named(NamedKey::AltGraph) => {}
+                                                            _ => control_flow.exit(),
+                                                        }
+                                                    } else if configurator.fullscreen && !configurator.preview_window {
+                                                        control_flow.exit();
+                                                        process::exit(0);
+                                                    }
+                                                }
+                                            }
+                                            #[cfg(target_arch = "wasm32")]
+                                            WindowEvent::KeyboardInput {
+                                                event:
+                                                KeyEvent {
+                                                    state: ElementState::Pressed,
+                                                    logical_key,
+                                                    ..
+                                                },
+                                                ..
+                                            } => match logical_key {
+                                                Key::Named(NamedKey::Escape) => {
+                                                    state.window.set_fullscreen(None);
+                                                }
+                                                Key::Named(NamedKey::F11) => {
+                                                    state
+                                                        .window
+                                                        .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                                }
+                                                Key::Character(char) if char == "f" => {
+                                                    state
+                                                        .window
+                                                        .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                                }
+                                                _ => {}
+                                            },
+                                            #[cfg(target_arch = "wasm32")]
+                                            WindowEvent::MouseInput {
+                                                button: MouseButton::Left,
+                                                state: ElementState::Pressed,
+                                                ..
+                                            }
+                                            | WindowEvent::Touch(..) => {
+                                                state
+                                                    .window
+                                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                            }
 
-    let result = event_loop.run(|event, control_flow| {
-        match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } /*if window_id == state.window().id()*/ => {
-                if !state.input(event) && window_id == state.window().id() {
-                    match event {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        WindowEvent::CloseRequested
-                        | WindowEvent::MouseInput {
-                            state: ElementState::Pressed,
-                            ..
-                        } => control_flow.exit(),
-                        #[cfg(not(debug_assertions))]
-                        #[cfg(not(target_arch = "wasm32"))]
-                        WindowEvent::KeyboardInput {
-                            event,
-                            is_synthetic: false,
-                            ..
-                        } => {
-                            //exit the screensaver when any key is pressed, but not on the web (duh)
-                            log::debug!("{:?}", event);
+                                            WindowEvent::Resized(physical_size) => {
+                                                state.resize(*physical_size);
+                                            }
+                                            WindowEvent::RedrawRequested => {
+                                                state.window().request_redraw();
+                                                state.window().set_visible(true);
 
-                            if event.state == ElementState::Pressed {
-                                //stupid windows sending a stupid random key event at the start of the program
-                                if cfg!(target_os = "windows") {
-                                    match event.logical_key {
-                                        Key::Named(NamedKey::AltGraph) => {}
-                                        _ => control_flow.exit(),
+                                                /*
+                                                if !surface_configured {
+                                                    return;
+                                                }*/
+
+                                                state.update(&*configurator);
+                                                match state.render() {
+                                                    Ok(_) => {}
+                                                    // Reconfigure the surface if it's lost or outdated
+                                                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                                                        state.resize(window.inner_size())
+                                                    }
+                                                    // The system is out of memory, we should probably quit
+                                                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                                                        log::error!("Out Of Memory");
+                                                        control_flow.exit();
+                                                    }
+
+                                                    // This happens when the a frame takes too long to present
+                                                    Err(wgpu::SurfaceError::Timeout) => {
+                                                        log::warn!("Surface timeout")
+                                                    }
+                                                    Err(wgpu::SurfaceError::Other) => {
+                                                        log::error!("Other render error ¯\\_(ツ)_/¯")
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
                                     }
-                                } else {
-                                    control_flow.exit()
                                 }
-                            }
-                        }
-                        #[cfg(target_arch = "wasm32")]
-                        WindowEvent::KeyboardInput {
-                            event:
-                            KeyEvent {
-                                state: ElementState::Pressed,
-                                logical_key,
-                                ..
-                            },
-                            ..
-                        } => match logical_key {
-                            Key::Named(NamedKey::Escape) => {
-                                state.window.set_fullscreen(None);
-                            }
-                            Key::Named(NamedKey::F11) => {
-                                state
-                                    .window
-                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
-                            }
-                            Key::Character(char) if char == "f" => {
-                                state
-                                    .window
-                                    .set_fullscreen(Some(Fullscreen::Borderless(None)));
-                            }
-                            _ => {}
-                        },
-                        #[cfg(target_arch = "wasm32")]
-                        WindowEvent::MouseInput {
-                            button: MouseButton::Left,
-                            state: ElementState::Pressed,
-                            ..
-                        }
-                        | WindowEvent::Touch(..) => {
-                            state
-                                .window
-                                .set_fullscreen(Some(Fullscreen::Borderless(None)));
-                        }
-
-                        WindowEvent::Resized(physical_size) => {
-                            state.resize(*physical_size);
-                        }
-                        WindowEvent::RedrawRequested => {
-                            state.window().request_redraw();
-                            state.window().set_visible(true);
-
-                            /*
-                            if !surface_configured {
-                                return;
-                            }*/
-
-                            state.update();
-                            match state.render() {
-                                Ok(_) => {}
-                                // Reconfigure the surface if it's lost or outdated
-                                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                                    state.resize(window.inner_size())
-                                }
-                                // The system is out of memory, we should probably quit
-                                Err(wgpu::SurfaceError::OutOfMemory) => {
-                                    log::error!("Out Of Memory");
-                                    control_flow.exit();
-                                }
-
-                                // This happens when the a frame takes too long to present
-                                Err(wgpu::SurfaceError::Timeout) => {
-                                    log::warn!("Surface timeout")
-                                }
-                                Err(wgpu::SurfaceError::Other) => {
-                                    log::error!("Other render error ¯\\_(ツ)_/¯")
-                                }
+                                _ => {}
                             }
                         }
                         _ => {}
                     }
+                });
+
+                match result {
+                    Ok(_) => {
+                        log::info!("Window closed without errors");
+                    }
+                    Err(err) => {
+                        log::error!("Window closed with error: {:?}", err);
+                    }
                 }
             }
-            _ => {}
-        }
-    });
-
-    match result {
-        Ok(_) => {
-            log::info!("Window closed without errors");
-        }
-        Err(err) => {
-            log::error!("Window closed with error: {:?}", err);
+            Err(err) => log::error!("Failed to create the event loop: {:?}", err),
         }
     }
 }
