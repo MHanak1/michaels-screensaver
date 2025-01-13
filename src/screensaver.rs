@@ -142,6 +142,7 @@ impl ScreenSaver for BallScreenSaver {
                 }
                 BallColorMode::Infection => {
                     if i == 0 {
+                        self.color = util::random_distinct_color(infection_starting_color);
                         instance.color = self.color;
                     } else {
                         instance.color = infection_starting_color;
@@ -217,7 +218,7 @@ impl ScreenSaver for BallScreenSaver {
 
                                 match config.color_mode {
                                     BallColorMode::Random => {
-                                        instance.color = util::random_color();
+                                        instance.color = util::random_distinct_color(self.color);
                                     }
                                     BallColorMode::Color => {
                                         instance.color = self.color;
@@ -262,7 +263,7 @@ impl ScreenSaver for BallScreenSaver {
                             let instance = &mut particle_system.instances[i];
                             match config.color_mode {
                                 BallColorMode::Random => {
-                                    instance.color = util::random_color();
+                                    instance.color = util::random_distinct_color(self.color);
                                 }
                                 BallColorMode::Color => {
                                     instance.color = self.color;

@@ -10,6 +10,7 @@ use prisma::{Hsv, Rgb};
 use rand::Rng;
 use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
+use angular_units::{Angle, Turns};
 use wgpu::{BindGroupLayout, Color, Device};
 
 pub fn compare_colors_ignoring_alpha(left: Color, right: Color) -> bool{
@@ -22,6 +23,36 @@ pub fn random_color() -> Color {
         1.0,
     );
     let rgb = Rgb::from(hsv);
+    Color {
+        r: rgb.red(),
+        g: rgb.green(),
+        b: rgb.blue(),
+        a: 1.0,
+    }
+}
+
+pub fn random_distinct_color(other_color: Color) -> Color {
+    let old_rgb = Rgb::new(other_color.r, other_color.g, other_color.b);
+    let old_hsv: Hsv<f64, Turns<f64>>= Hsv::from(old_rgb);
+
+    let mut new_hsv = old_hsv.clone();
+
+    loop {
+        new_hsv = Hsv::new(
+            angular_units::Turns(rand::random::<f64>()),
+            1.0,
+            1.0,
+        );
+        let mut delta = old_hsv.hue().scalar() - new_hsv.hue().scalar();
+        if delta > 0.5 {delta -= 1.0}
+        else if delta < -0.5 {delta += 1.0}
+        println!("old hue: {}, new hue: {}", old_hsv.hue().scalar(), new_hsv.hue().scalar());
+        println!("delta: {}", delta);
+        if delta > 0.2 {
+            break;
+        }
+    }
+    let rgb = Rgb::from(new_hsv);
     Color {
         r: rgb.red(),
         g: rgb.green(),
