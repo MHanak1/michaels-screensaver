@@ -6,3 +6,6 @@ Cargo.lock
 wasm-pack.log
 /lib/
 /lib/*
+/lib/wgpu/
+/lib/egui/
+/.idea/workspace.*
