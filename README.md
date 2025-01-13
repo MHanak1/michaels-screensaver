@@ -1,69 +1,42 @@
 <div align="center">
 
-  <h1><code>wasm-pack-template</code></h1>
+  <h1><code>Michael's Screensaver</code></h1>
 
-  <strong>A template for kick starting a Rust and WebAssembly project using <a href="https://github.com/rustwasm/wasm-pack">wasm-pack</a>.</strong>
-
+<strong>A (growing) collection of screensavers made by yours truly.</strong>
   <p>
-    <a href="https://travis-ci.org/rustwasm/wasm-pack-template"><img src="https://img.shields.io/travis/rustwasm/wasm-pack-template.svg?style=flat-square" alt="Build Status" /></a>
+    <a href="https://mhanak.net/screensaver">Live Demo</a>
   </p>
-
-  <h3>
-    <a href="https://rustwasm.github.io/docs/wasm-pack/tutorials/npm-browser-packages/index.html">Tutorial</a>
-    <span> | </span>
-    <a href="https://discordapp.com/channels/442252698964721669/443151097398296587">Chat</a>
-  </h3>
-
-  <sub>Built with 🦀🕸 by <a href="https://rustwasm.github.io/">The Rust and WebAssembly Working Group</a></sub>
 </div>
 
 ## About
+A screensaver app written in Rust, using [wgpu](https://wgpu.rs/) for rendering, and [egui](https://egui.rs) for the config GUI 
+## Usage
+### Any Ol' Web Browser*
+* Go to https://mhanak.net/screensaver
+* Enjoy
 
-[**📚 Read this template tutorial! 📚**][template-docs]
+\*Any browser\*\* that supports WebGL
 
-This template is designed for compiling Rust libraries into WebAssembly and
-publishing the resulting package to NPM.
-
-Be sure to check out [other `wasm-pack` tutorials online][tutorials] for other
-templates and usages of `wasm-pack`.
-
-[tutorials]: https://rustwasm.github.io/docs/wasm-pack/tutorials/index.html
-[template-docs]: https://rustwasm.github.io/docs/wasm-pack/tutorials/npm-browser-packages/index.html
-
-## 🚴 Usage
-
-### 🐑 Use `cargo generate` to Clone this Template
-
-[Learn more about `cargo generate` here.](https://github.com/ashleygwilliams/cargo-generate)
-
-```
-cargo generate --git https://github.com/rustwasm/wasm-pack-template.git --name my-project
-cd my-project
-```
-
-### 🛠️ Build with `wasm-pack build`
-
-```
-wasm-pack build
-```
-
-### 🔬 Test in Headless Browsers with `wasm-pack test`
-
-```
-wasm-pack test --headless --firefox
-```
-
-### 🎁 Publish to NPM with `wasm-pack publish`
-
-```
-wasm-pack publish
-```
-
-## 🔋 Batteries Included
-
-* [`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen) for communicating
-  between WebAssembly and JavaScript.
-* [`console_error_panic_hook`](https://github.com/rustwasm/console_error_panic_hook)
-  for logging panic messages to the developer console.
-* [`wee_alloc`](https://github.com/rustwasm/wee_alloc), an allocator optimized
-  for small code size.
+\*\*I know WebGL doesn't work on Chromium on Linux by default
+### Windows
+* Download the `michaels-screensaver.scr` file
+* Once downloaded, right-click the file -> Install
+* Done!
+* If you want to configure it, either do it through settings, or right-click -> Configure
+### Linux
+#### To Play With It
+* In the directory you have downloaded the binary run:
+  * `./michaels-screensaver` - to run it
+  * `./michaels-screensaver --help` - for the list of commands (also tells you where the config file is located)
+  * `./michaels-screensaver --config` -for the config GUI
+#### To Use as an Actual Screensaver
+* ¯\\\_(ツ)\_/¯
+* Try [this script](https://askubuntu.com/questions/707855/how-to-execute-a-command-after-a-certain-period-of-inactivity-triggered-by-keyb) (i may eventually build that into the screensaver)
+### MacOS
+* Probably doesn't work. (but if you have a mac and really need to run this natively, feel free to reach out to me)
+## Building
+### Native
+`cargo run --release` - the compiled binary *should* be somewhere in the `target/release` folder
+### Web Assembly
+`wasm-pack build --target web --release` - the generated folder `pkg` together with `index.html` and `index.css` are needed for the web version.
+`./serve.py` (or `python serve.py`) - run it locally (with cache disabled)

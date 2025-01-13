@@ -59,18 +59,25 @@ fn main() {
             )
             .expect("TODO: panic message");
         }
-    } else if args.contains(&"-c".to_string()) || args.contains(&"--config".to_string()) {
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 400.0]),
-            ..Default::default()
-        };
-        eframe::run_native(
-            "Screensaver Config",
-            options,
-            Box::new(|_cc| Ok(Box::new(config_app))),
-        )
-        .expect("eframe brokey");
     } else {
-        pollster::block_on(michaels_screensaver::run());
+        if args.contains(&"-c".to_string()) || args.contains(&"--config".to_string()) {
+            let options = eframe::NativeOptions {
+                viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 400.0]),
+                ..Default::default()
+            };
+            eframe::run_native(
+                "Screensaver Config",
+                options,
+                Box::new(|_cc| Ok(Box::new(config_app))),
+            )
+                .expect("eframe brokey");
+        } else if args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {
+            println!("--help or -h: show this message");
+            println!("--config or -c: open the configuration GUI");
+            println!("the configuration file is located at: {}", config_path.display());
+        }
+        else {
+            pollster::block_on(michaels_screensaver::run());
+        }
     }
 }

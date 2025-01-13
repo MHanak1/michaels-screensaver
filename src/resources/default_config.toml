@@ -9,14 +9,20 @@ snowflake_count = 7500
 speed = 0.2
 count = 1000
 size = 0.1
-#avaliable: random, color, temperature, infection
-color_mode = "temperature"
-#used for the density color mode. the determines what density is considered "high"
-show_density = false
-target_display_density = 10.0
-#ball color in hex
+#avaliable:
+    #random - a random color, it changes when balls bounce off of each other
+    #color - a flat color.
+    #temperature - makes it so the color's hue depends on a given particle's velocity. may impact perfromance
+    #infection - one ball is chosen, it has a different color to every other ball and it is infected. ever ball that touches an infected ball becomes infected itself. after all balls get infected a new one is chosen
+color_mode = "infection"
 color = "#ffffff"
-# larger regions mean more collision calculations, too many regions may impact performance. impacts density display
-# keep at 1.0 if you don't know what it does, do not set lower than 0.5, otherwise the simulation will start glitching
+#makes it so the opacity of a ball is dependent on the ammount of balls in the surrounding regions. if the region size is lower, the contrast will be higher
+show_density = false
+#used for the density color mode. the determines what density is considered "high"
+target_display_density = 10.0
+#for optimisation's sake, the space is divided up into regions, of which the size depends on the ball size, and this value. increase this value for spare simulations, decrease it for dense ones
+#do not decrease it under 0.5, otherwise the simulation will start glitching
+#if you want to learn more look up "spatial hashing"
 region_size = 1.0
+#whether the balls should slow down/speed up if the average speed is higher/lower than the configured speed.
 correct_ball_velocity = true
