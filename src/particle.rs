@@ -1,14 +1,13 @@
 #![allow(dead_code)]
 
-use crate::instance::{Instance, InstanceRaw};
+use crate::instance::Instance;
 use crate::model::{DrawMesh, Mesh, ModelVertex};
 use crate::util::{BoundingBox, BoundingBoxType, InstanceContainer};
 use cgmath::{Vector2, Vector3, Zero};
-use std::any::Any;
 use std::ops::{Add, Mul, Range};
 use std::time::Duration;
 use wgpu::util::DeviceExt;
-use wgpu::{Color, Queue};
+use wgpu::Queue;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParticleData {
@@ -39,7 +38,7 @@ impl ParticleSystem {
     pub fn create_billboard(
         width: f32,
         height: f32,
-        position: Vector3<f32>,
+        _position: Vector3<f32>,
         particle_system_data: ParticleSystemData,
         device: &wgpu::Device,
     ) -> ParticleSystem {
@@ -77,12 +76,12 @@ impl ParticleSystem {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&vertices.as_slice()),
+            contents: bytemuck::cast_slice(vertices.as_slice()),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&indices),
+            contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -232,7 +231,7 @@ impl Mesh for ParticleSystem {
                         .add(data.velocity.mul(delta_t.as_secs_f32()));
                 }
             }
-            instance.age = instance.age + delta_t;
+            instance.age += delta_t;
         }
         //model.mesh.rebuild_instance_buffer(device);
         self.update_instance_buffer(queue);

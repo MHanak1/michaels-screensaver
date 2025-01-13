@@ -4,7 +4,6 @@
 use eframe::{HardwareAcceleration, Renderer};
 use michaels_screensaver::configurator::{ConfigUI, Configurator};
 use michaels_screensaver::{get_config, DEFAULT_CONFIG};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::{env, process};
@@ -60,20 +59,18 @@ fn main() {
             )
             .expect("TODO: panic message");
         }
+    } else if args.contains(&"-c".to_string()) || args.contains(&"--config".to_string()) {
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 400.0]),
+            ..Default::default()
+        };
+        eframe::run_native(
+            "Screensaver Config",
+            options,
+            Box::new(|_cc| Ok(Box::new(config_app))),
+        )
+        .expect("eframe brokey");
     } else {
-        if args.contains(&"-c".to_string()) || args.contains(&"--config".to_string()) {
-            let options = eframe::NativeOptions {
-                viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 400.0]),
-                ..Default::default()
-            };
-            eframe::run_native(
-                "Screensaver Config",
-                options,
-                Box::new(|_cc| Ok(Box::new(config_app))),
-            )
-            .expect("eframe brokey");
-        } else {
-            pollster::block_on(michaels_screensaver::run());
-        }
+        pollster::block_on(michaels_screensaver::run());
     }
 }

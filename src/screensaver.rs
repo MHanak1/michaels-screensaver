@@ -1,23 +1,19 @@
 use crate::configurator::Configurator;
-use crate::instance::Instance;
 use crate::model::{DrawModel, Material, Mesh, Model};
-use crate::particle::{ParticleData, ParticleSystem, ParticleSystemData};
-use crate::util::{BoundingBox, BoundingBoxType, Position2};
-use crate::{model, texture, util, State};
-use cgmath::num_traits::real::Real;
-use cgmath::{InnerSpace, MetricSpace, Vector3, Zero};
+use crate::particle::{ParticleSystem, ParticleSystemData};
+use crate::util::{BoundingBox, BoundingBoxType};
+use crate::{texture, util, State};
+use cgmath::{InnerSpace, MetricSpace, Vector3};
 use prisma::{Hsv, Rgb};
 use rand::prelude::SliceRandom;
-use rand::{random, Rng};
-use std::collections::{HashMap, VecDeque};
-use std::ops::{AddAssign, Mul, MulAssign};
+use rand::random;
+use std::ops::{AddAssign, MulAssign};
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
-use wgpu::{BindGroupLayout, Color, Device, Queue, RenderPass};
+use wgpu::Color;
 use winit::dpi::Size;
-use winit::event::{Event, WindowEvent};
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
@@ -54,7 +50,6 @@ pub trait ScreenSaver {
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub(crate) enum BallColorMode {
     Random,
     Color,
@@ -82,7 +77,7 @@ impl ScreenSaver for BallScreenSaver {
             first_input_handled: false,
             color: util::color_from_hex(config.color.to_hex()).unwrap(),
             actual_ball_speed: config.ball_speed,
-            old_config: config.clone(),
+            old_config: config,
         }
     }
     fn setup(
@@ -101,7 +96,7 @@ impl ScreenSaver for BallScreenSaver {
 
         let circle_texture = include_bytes!("resources/textures/circle16.png");
         let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, circle_texture, "circle16.png").unwrap();
+            texture::Texture::from_bytes(device, queue, circle_texture, "circle16.png").unwrap();
         let mut particle_system = ParticleSystem::create_billboard(
             0.16,
             0.16,
@@ -115,12 +110,12 @@ impl ScreenSaver for BallScreenSaver {
                 0.0,
                 BoundingBoxType::Bounce,
             )),
-            &device,
+            device,
         );
 
-        let material = Material::new(diffuse_texture, &device, &layout);
+        let material = Material::new(diffuse_texture, device, layout);
 
-        particle_system.populate_random(config.ball_count.try_into().unwrap(), device);
+        particle_system.populate_random(config.ball_count, device);
 
         let infection_starting_color = util::random_color();
 
@@ -176,98 +171,50 @@ impl ScreenSaver for BallScreenSaver {
         let ratio = size.to_logical::<f32>(1.0).width / size.to_logical::<f32>(1.0).height;
         //Note: this only is non-zero later if self.correct_ball_velocity is true
         let mut total_velocity = 0.0;
-        let mut velocity_updated = false;
 
         let mut infected_balls = 0;
         let infection_starting_color = util::random_color();
 
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
-            match model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
-                Some(mut particle_system) => {
-                    if *config != self.old_config {
-                        println!("config changed");
-                        let mut should_rebuild_instance_buffer = false;
+            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                if *config != self.old_config {
+                    println!("config changed");
+                    let mut should_rebuild_instance_buffer = false;
 
-                        if config.ball_speed != self.old_config.ball_speed {
-                            //redo the calculation because i am not sure if actual_ball_velocity is always calculated
-                            let mut total_v = 0.0;
-                            for data in particle_system.particle_data.iter() {
-                                total_v += data.velocity.magnitude();
-                            }
-                            let avg_v: f32 = total_v / particle_system.particle_data.len() as f32;
-                            if avg_v.is_normal() {
-                                for data in particle_system.particle_data.iter_mut() {
-                                    data.velocity.mul_assign(config.ball_speed / avg_v);
-                                }
-                            }
-                            velocity_updated = true;
+                    if config.ball_speed != self.old_config.ball_speed {
+                        //redo the calculation because i am not sure if actual_ball_velocity is always calculated
+                        let mut total_v = 0.0;
+                        for data in particle_system.particle_data.iter() {
+                            total_v += data.velocity.magnitude();
                         }
-
-                        if config.ball_count != self.old_config.ball_count {
-                            let delta = config.ball_count as i32 - self.old_config.ball_count as i32;
-                            if delta > 0 {
-                                particle_system.populate_random(delta.try_into().unwrap(), device);
-
-                                for i in self.old_config.ball_count as usize..particle_system.instances.len() {
-                                    let instance = &mut particle_system.instances[i];
-                                    let data = &mut particle_system.particle_data[i];
-
-                                    let mut move_vector = Vector3::new(
-                                        random::<f32>() - 0.5,
-                                        random::<f32>() - 0.5,
-                                        //random::<f32>() - 0.5,
-                                        0.0,
-                                    );
-                                    move_vector = move_vector.normalize() * config.ball_speed;
-
-                                    data.velocity = move_vector;
-
-                                    match config.color_mode {
-                                        BallColorMode::Random => {
-                                            instance.color = util::random_color();
-                                        }
-                                        BallColorMode::Color => {
-                                            instance.color = self.color;
-                                        }
-                                        BallColorMode::Infection => {
-                                            if i == 0 {
-                                                instance.color = self.color;
-                                            } else {
-                                                instance.color = infection_starting_color;
-                                            }
-                                        }
-                                        _ => {
-                                            instance.color = Color {
-                                                r: 1.0,
-                                                g: 1.0,
-                                                b: 1.0,
-                                                a: 1.0,
-                                            };
-                                        }
-                                    }
-                                    instance.scale = config.ball_size;
-                                }
-                            }
-                            else {
-                                particle_system.instances.instances.truncate(config.ball_count as usize);
-                                particle_system.particle_data.truncate(config.ball_count as usize);
-                            }
-
-                            should_rebuild_instance_buffer = true;
-                        }
-
-                        if config.ball_size != self.old_config.ball_size {
-                            for instance in particle_system.instances.instances.iter_mut() {
-                                instance.scale = config.ball_size;
+                        let avg_v: f32 = total_v / particle_system.particle_data.len() as f32;
+                        if avg_v.is_normal() {
+                            for data in particle_system.particle_data.iter_mut() {
+                                data.velocity.mul_assign(config.ball_speed / avg_v);
                             }
                         }
+                    }
 
-                        if config.color_mode != self.old_config.color_mode || config.color != self.old_config.color {
-                            self.color = util::color_from_hex(config.color.to_hex()).unwrap();
-                            let infection_starting_color = util::random_color();
-                            for i in 0..particle_system.instances.instances.len() {
+                    if config.ball_count != self.old_config.ball_count {
+                        let delta = config.ball_count as i32 - self.old_config.ball_count as i32;
+                        if delta > 0 {
+                            particle_system.populate_random(delta.try_into().unwrap(), device);
+
+                            for i in self.old_config.ball_count..particle_system.instances.len() {
                                 let instance = &mut particle_system.instances[i];
+                                let data = &mut particle_system.particle_data[i];
+
+                                let mut move_vector = Vector3::new(
+                                    random::<f32>() - 0.5,
+                                    random::<f32>() - 0.5,
+                                    //random::<f32>() - 0.5,
+                                    0.0,
+                                );
+                                move_vector = move_vector.normalize() * config.ball_speed;
+
+                                data.velocity = move_vector;
+
                                 match config.color_mode {
                                     BallColorMode::Random => {
                                         instance.color = util::random_color();
@@ -277,11 +224,9 @@ impl ScreenSaver for BallScreenSaver {
                                     }
                                     BallColorMode::Infection => {
                                         if i == 0 {
-                                            self.color = util::random_color();
                                             instance.color = self.color;
-                                        }
-                                        else {
-                                            instance.color = infection_starting_color
+                                        } else {
+                                            instance.color = infection_starting_color;
                                         }
                                     }
                                     _ => {
@@ -293,79 +238,114 @@ impl ScreenSaver for BallScreenSaver {
                                         };
                                     }
                                 }
+                                instance.scale = config.ball_size;
                             }
                         }
+                        else {
+                            particle_system.instances.instances.truncate(config.ball_count);
+                            particle_system.particle_data.truncate(config.ball_count);
+                        }
 
-                        if config.show_density != self.old_config.show_density {
-                            for instance in particle_system.instances.iter_mut() {
-                                if !config.show_density {
-                                    instance.color.a = 1.0;
+                        should_rebuild_instance_buffer = true;
+                    }
+
+                    if config.ball_size != self.old_config.ball_size {
+                        for instance in particle_system.instances.instances.iter_mut() {
+                            instance.scale = config.ball_size;
+                        }
+                    }
+
+                    if config.color_mode != self.old_config.color_mode || config.color != self.old_config.color {
+                        self.color = util::color_from_hex(config.color.to_hex()).unwrap();
+                        let infection_starting_color = util::random_color();
+                        for i in 0..particle_system.instances.instances.len() {
+                            let instance = &mut particle_system.instances[i];
+                            match config.color_mode {
+                                BallColorMode::Random => {
+                                    instance.color = util::random_color();
+                                }
+                                BallColorMode::Color => {
+                                    instance.color = self.color;
+                                }
+                                BallColorMode::Infection => {
+                                    if i == 0 {
+                                        self.color = util::random_color();
+                                        instance.color = self.color;
+                                    }
+                                    else {
+                                        instance.color = infection_starting_color
+                                    }
+                                }
+                                _ => {
+                                    instance.color = Color {
+                                        r: 1.0,
+                                        g: 1.0,
+                                        b: 1.0,
+                                        a: 1.0,
+                                    };
                                 }
                             }
                         }
+                    }
 
-                        if should_rebuild_instance_buffer {
-                            particle_system.rebuild_instance_buffer(&device);
+                    if config.show_density != self.old_config.show_density {
+                        for instance in particle_system.instances.iter_mut() {
+                            if !config.show_density {
+                                instance.color.a = 1.0;
+                            }
                         }
-
-                        self.old_config = config.clone();
                     }
 
-
-                    particle_system.instances.regions_x =
-                        (1.0 * ratio / (0.16 * config.ball_size * config.region_size)).ceil() as usize;
-                    particle_system.instances.regions_y =
-                        (1.0 / (0.16 * config.ball_size * config.region_size)).ceil() as usize;
-
-                    if particle_system.instances.regions_x == 0
-                        || particle_system.instances.regions_y == 0
-                    {
-                        return;
+                    if should_rebuild_instance_buffer {
+                        particle_system.rebuild_instance_buffer(device);
                     }
 
-                    particle_system.instances.bounding_box =
-                        particle_system.particle_system_data.domain;
-                    particle_system.instances.rebuild_regions();
-
-                    for x in 0..particle_system.instances.regions_x {
-                        for y in 0..particle_system.instances.regions_y {
-                            for a in 0..particle_system.instances.get_region_mut(x, y).len() {
-                                let i = particle_system.instances.get_region_mut(x, y)[a];
-                                let mut density = 0;
-                                let instance = particle_system.instances[i];
-                                let mut velocity_if_correcting_it = 0.0;
+                    self.old_config = *config;
+                }
 
 
-                                if config.correct_ball_velocity {
-                                    velocity_if_correcting_it =
-                                        particle_system.particle_data[i].velocity.magnitude();
+                particle_system.instances.regions_x =
+                    (1.0 * ratio / (0.16 * config.ball_size * config.region_size)).ceil() as usize;
+                particle_system.instances.regions_y =
+                    (1.0 / (0.16 * config.ball_size * config.region_size)).ceil() as usize;
 
-                                    if velocity_if_correcting_it.is_normal() {
-                                        let scalar = (config.ball_speed / self.actual_ball_speed
-                                            - 1.0)
-                                            * dt.as_secs_f32()
-                                            / 10.0
-                                            + 1.0;
-                                        particle_system.particle_data[i]
-                                            .velocity
-                                            .mul_assign(scalar.clamp(0.5, 2.0));
+                if particle_system.instances.regions_x == 0
+                    || particle_system.instances.regions_y == 0
+                {
+                    return;
+                }
 
-                                        if particle_system.particle_data[i].velocity.magnitude2()
-                                            > (config.ball_speed * config.ball_speed * 1000.0).max(10.0) // we don't want false detections with low configured ball speeds
-                                        {
-                                            log::error!("Particle velocity went haywire. Resetting it to a new random velocity. (velocity: {}, before correcting: {}, scalar: {})", particle_system.particle_data[i].velocity.magnitude(), velocity_if_correcting_it, scalar);
-                                            let mut move_vector = Vector3::new(
-                                                random::<f32>() - 0.5,
-                                                random::<f32>() - 0.5,
-                                                //random::<f32>() - 0.5,
-                                                0.0,
-                                            );
-                                            move_vector = move_vector.normalize() * config.ball_speed;
-                                            particle_system.particle_data[i].velocity = move_vector;
-                                        }
-                                        total_velocity += velocity_if_correcting_it;
-                                    } else {
-                                        log::error!("Velocity is not normal. Resetting it to new random velocity. (velocity: {:?}, index: {})", particle_system.particle_data[i].velocity, i);
+                particle_system.instances.bounding_box =
+                    particle_system.particle_system_data.domain;
+                particle_system.instances.rebuild_regions();
+
+                for x in 0..particle_system.instances.regions_x {
+                    for y in 0..particle_system.instances.regions_y {
+                        for a in 0..particle_system.instances.get_region_mut(x, y).len() {
+                            let i = particle_system.instances.get_region_mut(x, y)[a];
+                            let mut density = 0;
+                            let instance = particle_system.instances[i];
+                            let mut velocity_if_correcting_it = 0.0;
+
+
+                            if config.correct_ball_velocity {
+                                velocity_if_correcting_it =
+                                    particle_system.particle_data[i].velocity.magnitude();
+
+                                if velocity_if_correcting_it.is_normal() {
+                                    let scalar = (config.ball_speed / self.actual_ball_speed
+                                        - 1.0)
+                                        * dt.as_secs_f32()
+                                        / 10.0
+                                        + 1.0;
+                                    particle_system.particle_data[i]
+                                        .velocity
+                                        .mul_assign(scalar.clamp(0.5, 2.0));
+
+                                    if particle_system.particle_data[i].velocity.magnitude2()
+                                        > (config.ball_speed * config.ball_speed * 1000.0).max(10.0) // we don't want false detections with low configured ball speeds
+                                    {
+                                        log::error!("Particle velocity went haywire. Resetting it to a new random velocity. (velocity: {}, before correcting: {}, scalar: {})", particle_system.particle_data[i].velocity.magnitude(), velocity_if_correcting_it, scalar);
                                         let mut move_vector = Vector3::new(
                                             random::<f32>() - 0.5,
                                             random::<f32>() - 0.5,
@@ -375,144 +355,147 @@ impl ScreenSaver for BallScreenSaver {
                                         move_vector = move_vector.normalize() * config.ball_speed;
                                         particle_system.particle_data[i].velocity = move_vector;
                                     }
-                                }
-
-                                //particle_system.particle_data[i].velocity.add_assign(GRAVITY.mul(dt.as_secs_f32()));
-
-                                particle_system
-                                    .instances
-                                    .get_regions_in_range(x, y, 1)
-                                    .iter()
-                                    .for_each(|&j| {
-                                        density += 1;
-                                        if i > j {
-                                            let other_instance = particle_system.instances[j];
-                                            let other_data = particle_system.particle_data[j];
-                                            let data = particle_system.particle_data[i];
-
-                                            //check if the bals collide
-                                            if (instance.position.x - other_instance.position.x)
-                                                * (instance.position.x - other_instance.position.x)
-                                                + (instance.position.y - other_instance.position.y)
-                                                    * (instance.position.y
-                                                        - other_instance.position.y)
-                                                < instance.scale
-                                                    * data.collider.unwrap().x
-                                                    * instance.scale
-                                                    * data.collider.unwrap().y
-                                            {
-                                                let distance = instance
-                                                    .position
-                                                    .distance(other_instance.position)
-                                                    .clone();
-                                                let target_distance = (config.ball_size
-                                                    * data.collider.unwrap().x)
-                                                    .clone();
-
-                                                let n = (instance.position
-                                                    - other_instance.position)
-                                                    .normalize();
-                                                particle_system.instances[i].position.add_assign(
-                                                    n * (target_distance - distance) / 2.0,
-                                                );
-                                                particle_system.instances[j].position.add_assign(
-                                                    -n * (target_distance - distance) / 2.0,
-                                                );
-                                                let v1 = -data.velocity;
-                                                let v2 = -other_data.velocity;
-                                                let c1 = instance.position;
-                                                let c2 = other_instance.position;
-
-                                                //https://stackoverflow.com/questions/35211114/2d-elastic-ball-collision-physics
-                                                particle_system.particle_data[i].velocity = -v1
-                                                    + (c1 - c2) * (v1 - v2).dot(c1 - c2)
-                                                        / (c1 - c2).magnitude2();
-                                                particle_system.particle_data[j].velocity = -v2
-                                                    + (c2 - c1) * (v2 - v1).dot(c2 - c1)
-                                                        / (c2 - c1).magnitude2();
-
-                                                match config.color_mode {
-                                                    BallColorMode::Random => {
-                                                        let col = util::random_color();
-
-                                                        particle_system.instances[i].color = col;
-                                                        particle_system.instances[j].color = col;
-                                                    }
-                                                    BallColorMode::Infection => {
-                                                        if (util::compare_colors_ignoring_alpha(other_instance.color, self.color)
-                                                            || util::compare_colors_ignoring_alpha(instance.color, self.color))
-                                                            && ! util::compare_colors_ignoring_alpha(instance.color ,other_instance.color)
-                                                        {
-                                                            particle_system.instances[i].color =
-                                                                self.color;
-                                                            particle_system.instances[j].color =
-                                                                self.color;
-                                                        }
-                                                    }
-                                                    _ => {}
-                                                }
-                                                //particle_system.instances[i].age = Duration::new(0, 0);
-                                            }
-                                        }
-                                    });
-
-                                match config.color_mode {
-                                    BallColorMode::Temperature => {
-                                        let hsv = Hsv::new(
-                                            angular_units::Turns {
-                                                0: (((if config.correct_ball_velocity {
-                                                    velocity_if_correcting_it
-                                                } else {
-                                                    particle_system.particle_data[i]
-                                                        .velocity
-                                                        .magnitude()
-                                                }) / config.ball_speed
-                                                    - 0.5)
-                                                    .max(0.0)
-                                                    / 50.0)
-                                                    .clamp(0.0, 0.9),
-                                            },
-                                            1.0,
-                                            1.0,
-                                        );
-                                        let rgb = Rgb::from(hsv);
-                                        particle_system.instances[i].color = Color {
-                                            r: rgb.red(),
-                                            g: rgb.green(),
-                                            b: rgb.blue(),
-                                            a: 1.0,
-                                        }
-                                    }
-                                    BallColorMode::Infection => {
-                                        if util::compare_colors_ignoring_alpha(instance.color, self.color) {
-                                            infected_balls += 1;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                if !config.show_density && config.show_density {
-                                    particle_system.instances()[i].color.a = 1.0;
-                                }
-                                if config.show_density {
-                                    let density = f64::clamp(
-                                        density as f64 / config.target_display_density,
+                                    total_velocity += velocity_if_correcting_it;
+                                } else {
+                                    log::error!("Velocity is not normal. Resetting it to new random velocity. (velocity: {:?}, index: {})", particle_system.particle_data[i].velocity, i);
+                                    let mut move_vector = Vector3::new(
+                                        random::<f32>() - 0.5,
+                                        random::<f32>() - 0.5,
+                                        //random::<f32>() - 0.5,
                                         0.0,
+                                    );
+                                    move_vector = move_vector.normalize() * config.ball_speed;
+                                    particle_system.particle_data[i].velocity = move_vector;
+                                }
+                            }
+
+                            //particle_system.particle_data[i].velocity.add_assign(GRAVITY.mul(dt.as_secs_f32()));
+
+                            particle_system
+                                .instances
+                                .get_regions_in_range(x, y, 1)
+                                .iter()
+                                .for_each(|&j| {
+                                    density += 1;
+                                    if i > j {
+                                        let other_instance = particle_system.instances[j];
+                                        let other_data = particle_system.particle_data[j];
+                                        let data = particle_system.particle_data[i];
+
+                                        //check if the bals collide
+                                        if (instance.position.x - other_instance.position.x)
+                                            * (instance.position.x - other_instance.position.x)
+                                            + (instance.position.y - other_instance.position.y)
+                                                * (instance.position.y
+                                                    - other_instance.position.y)
+                                            < instance.scale
+                                                * data.collider.unwrap().x
+                                                * instance.scale
+                                                * data.collider.unwrap().y
+                                        {
+                                            let distance = instance
+                                                .position
+                                                .distance(other_instance.position);
+                                            let target_distance = config.ball_size
+                                                * data.collider.unwrap().x;
+
+                                            let n = (instance.position
+                                                - other_instance.position)
+                                                .normalize();
+                                            particle_system.instances[i].position.add_assign(
+                                                n * (target_distance - distance) / 2.0,
+                                            );
+                                            particle_system.instances[j].position.add_assign(
+                                                -n * (target_distance - distance) / 2.0,
+                                            );
+                                            let v1 = -data.velocity;
+                                            let v2 = -other_data.velocity;
+                                            let c1 = instance.position;
+                                            let c2 = other_instance.position;
+
+                                            //https://stackoverflow.com/questions/35211114/2d-elastic-ball-collision-physics
+                                            particle_system.particle_data[i].velocity = -v1
+                                                + (c1 - c2) * (v1 - v2).dot(c1 - c2)
+                                                    / (c1 - c2).magnitude2();
+                                            particle_system.particle_data[j].velocity = -v2
+                                                + (c2 - c1) * (v2 - v1).dot(c2 - c1)
+                                                    / (c2 - c1).magnitude2();
+
+                                            match config.color_mode {
+                                                BallColorMode::Random => {
+                                                    let col = util::random_color();
+
+                                                    particle_system.instances[i].color = col;
+                                                    particle_system.instances[j].color = col;
+                                                }
+                                                BallColorMode::Infection => {
+                                                    if (util::compare_colors_ignoring_alpha(other_instance.color, self.color)
+                                                        || util::compare_colors_ignoring_alpha(instance.color, self.color))
+                                                        && ! util::compare_colors_ignoring_alpha(instance.color ,other_instance.color)
+                                                    {
+                                                        particle_system.instances[i].color =
+                                                            self.color;
+                                                        particle_system.instances[j].color =
+                                                            self.color;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            //particle_system.instances[i].age = Duration::new(0, 0);
+                                        }
+                                    }
+                                });
+
+                            match config.color_mode {
+                                BallColorMode::Temperature => {
+                                    let hsv = Hsv::new(
+                                        angular_units::Turns((((if config.correct_ball_velocity {
+                                                velocity_if_correcting_it
+                                            } else {
+                                                particle_system.particle_data[i]
+                                                    .velocity
+                                                    .magnitude()
+                                            }) / config.ball_speed
+                                                - 0.5)
+                                                .max(0.0)
+                                                / 50.0)
+                                                .clamp(0.0, 0.9)),
+                                        1.0,
                                         1.0,
                                     );
-                                    particle_system.instances()[i].color.a = density * density;
+                                    let rgb = Rgb::from(hsv);
+                                    particle_system.instances[i].color = Color {
+                                        r: rgb.red(),
+                                        g: rgb.green(),
+                                        b: rgb.blue(),
+                                        a: 1.0,
+                                    }
                                 }
+                                BallColorMode::Infection => {
+                                    if util::compare_colors_ignoring_alpha(instance.color, self.color) {
+                                        infected_balls += 1;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if config.show_density {
+                                let density = f64::clamp(
+                                    density as f64 / config.target_display_density,
+                                    0.0,
+                                    1.0,
+                                );
+                                particle_system.instances()[i].color.a = density * density;
                             }
                         }
                     }
-
-                    if infected_balls >= config.ball_count {
-                        self.color = util::random_color();
-                        particle_system.instances.instances.choose_mut(&mut rand::thread_rng()).unwrap().color = self.color;
-                    }
-
-                    particle_system.update_instance_buffer(queue);
                 }
-                None => {}
+
+                if infected_balls >= config.ball_count {
+                    self.color = util::random_color();
+                    particle_system.instances.instances.choose_mut(&mut rand::thread_rng()).unwrap().color = self.color;
+                }
+
+                particle_system.update_instance_buffer(queue);
             };
             model.update(dt, queue);
         }
@@ -530,22 +513,19 @@ impl ScreenSaver for BallScreenSaver {
     fn resize(&mut self, old_ratio: f32, new_ratio: f32) {
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
-            match model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
-                Some(mut particle_system) => {
-                    for instance in particle_system.instances.iter_mut() {
-                        instance.position.x *= new_ratio / old_ratio;
-                    }
-                    particle_system.particle_system_data.domain = BoundingBox::new_with_size(
-                        //Vector3::new(0.0, 0.0, 0.55),
-                        Vector3::new(0.0, 0.0, 0.0),
-                        2.0 * new_ratio,
-                        2.0,
-                        //1.00,
-                        0.0,
-                        BoundingBoxType::Bounce,
-                    );
+            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                for instance in particle_system.instances.iter_mut() {
+                    instance.position.x *= new_ratio / old_ratio;
                 }
-                _ => {}
+                particle_system.particle_system_data.domain = BoundingBox::new_with_size(
+                    //Vector3::new(0.0, 0.0, 0.55),
+                    Vector3::new(0.0, 0.0, 0.0),
+                    2.0 * new_ratio,
+                    2.0,
+                    //1.00,
+                    0.0,
+                    BoundingBoxType::Bounce,
+                );
             }
         }
     }
@@ -580,44 +560,38 @@ impl ScreenSaver for BallScreenSaver {
 
         let old_input = self.inputs[id as usize];
         const BRUSH_SIZE: f32 = 0.15;
-        match old_input {
-            Some(old_input) => {
-                for model in &mut self.balls {
-                    //get (ParticleSystem)(Object) idiot
-                    match model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
-                        Some(mut particle_system) => {
-                            let x: f32 = position[0] / 2.0 + 0.5;
-                            let y: f32 = position[1] / 2.0 + 0.5;
-                            for i in particle_system.instances.get_regions_in_range(
-                                usize::clamp(
-                                    (x * particle_system.instances.regions_x as f32) as usize,
-                                    0,
-                                    particle_system.instances.regions_x - 1,
-                                ),
-                                usize::clamp(
-                                    (y * particle_system.instances.regions_y as f32) as usize,
-                                    0,
-                                    particle_system.instances.regions_y - 1,
-                                ),
-                                (particle_system.instances.regions_y as f32 / 2.0 * BRUSH_SIZE)
-                                    .ceil() as u32,
-                            ) {
-                                //if particle_system.instances[i].position.distance2(Vector3::new(position[0], position[1], 0.0)) < BRUSH_SIZE * BRUSH_SIZE {
-                                particle_system.particle_data[i]
-                                    .velocity
-                                    .add_assign(Vector3::new(
-                                        position[0] - old_input[0],
-                                        position[1] - old_input[1],
-                                        0.0,
-                                    ));
-                                //}
-                            }
-                        }
-                        None => {}
+        if let Some(old_input) = old_input {
+            for model in &mut self.balls {
+                //get (ParticleSystem)(Object) idiot
+                if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                    let x: f32 = position[0] / 2.0 + 0.5;
+                    let y: f32 = position[1] / 2.0 + 0.5;
+                    for i in particle_system.instances.get_regions_in_range(
+                        usize::clamp(
+                            (x * particle_system.instances.regions_x as f32) as usize,
+                            0,
+                            particle_system.instances.regions_x - 1,
+                        ),
+                        usize::clamp(
+                            (y * particle_system.instances.regions_y as f32) as usize,
+                            0,
+                            particle_system.instances.regions_y - 1,
+                        ),
+                        (particle_system.instances.regions_y as f32 / 2.0 * BRUSH_SIZE)
+                            .ceil() as u32,
+                    ) {
+                        //if particle_system.instances[i].position.distance2(Vector3::new(position[0], position[1], 0.0)) < BRUSH_SIZE * BRUSH_SIZE {
+                        particle_system.particle_data[i]
+                            .velocity
+                            .add_assign(Vector3::new(
+                                position[0] - old_input[0],
+                                position[1] - old_input[1],
+                                0.0,
+                            ));
+                        //}
                     }
                 }
             }
-            None => {}
         }
         self.inputs[id as usize] = Some(position);
         false
@@ -630,13 +604,13 @@ impl ScreenSaver for BallScreenSaver {
 
         for model in &self.balls {
             render_pass.set_bind_group(0, &model.material.bind_group, &[]);
-            render_pass.draw_mesh_instanced(&model.mesh, 0..model.mesh.instance_count() as u32);
+            render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
         }
     }
 }
 
 pub struct SnowScreenSaver {
-    pub(crate) models: Vec<Box<Model>>,
+    pub(crate) models: Vec<Model>,
     old_config: Configurator,
 }
 
@@ -645,12 +619,12 @@ impl ScreenSaver for SnowScreenSaver {
     where
         Self: Sized,
     {
-        Self { models: vec![], old_config: config.clone()}
+        Self { models: vec![], old_config: config}
     }
 
     fn setup(
         &mut self,
-        size: Size,
+        _size: Size,
         config: &Configurator,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -659,7 +633,7 @@ impl ScreenSaver for SnowScreenSaver {
         //ground defined first so it gets drawn first and doesn't get occluded by the snow
         let ground1 = include_bytes!("resources/textures/ground1.png");
         let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, ground1, "ground1.png").unwrap();
+            texture::Texture::from_bytes(device, queue, ground1, "ground1.png").unwrap();
         let billboard = util::create_billboard(
             6.0,
             3.0,
@@ -669,11 +643,11 @@ impl ScreenSaver for SnowScreenSaver {
             &layout,
         )
         .unwrap();
-        self.models.push(Box::new(billboard));
+        self.models.push(billboard);
 
         let ground2 = include_bytes!("resources/textures/ground2.png");
         let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, ground2, "ground2.png").unwrap();
+            texture::Texture::from_bytes(device, queue, ground2, "ground2.png").unwrap();
         let billboard = util::create_billboard(
             6.0,
             3.0,
@@ -683,11 +657,11 @@ impl ScreenSaver for SnowScreenSaver {
             &layout,
         )
         .unwrap();
-        self.models.push(Box::new(billboard));
+        self.models.push(billboard);
 
         let ground3 = include_bytes!("resources/textures/ground3.png");
         let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, ground3, "ground3.png").unwrap();
+            texture::Texture::from_bytes(device, queue, ground3, "ground3.png").unwrap();
         let billboard = util::create_billboard(
             6.0,
             3.0,
@@ -697,13 +671,13 @@ impl ScreenSaver for SnowScreenSaver {
             &layout,
         )
         .unwrap();
-        self.models.push(Box::new(billboard));
+        self.models.push(billboard);
 
         let snow1 = include_bytes!("resources/textures/snow1.png");
         let snow2 = include_bytes!("resources/textures/snow2.png");
         let diffuse_textures = [
-            texture::Texture::from_bytes(&device, &queue, snow1, "snow1.png").unwrap(),
-            texture::Texture::from_bytes(&device, &queue, snow2, "snow2.png").unwrap(),
+            texture::Texture::from_bytes(device, queue, snow1, "snow1.png").unwrap(),
+            texture::Texture::from_bytes(device, queue, snow2, "snow2.png").unwrap(),
         ];
         for diffuse_texture in diffuse_textures {
             let mut snow_particle_system = ParticleSystem::create_billboard(
@@ -717,10 +691,10 @@ impl ScreenSaver for SnowScreenSaver {
                     1.0,
                     BoundingBoxType::Modulo,
                 )),
-                &device,
+                device,
             );
 
-            let snow_material = Material::new(diffuse_texture, &device, &layout);
+            let snow_material = Material::new(diffuse_texture, device, layout);
 
             snow_particle_system.populate_random(config.snowflake_count, device);
             for i in 0..snow_particle_system.instances.len() {
@@ -741,7 +715,7 @@ impl ScreenSaver for SnowScreenSaver {
                 material: snow_material,
             };
 
-            self.models.push(Box::new(snow));
+            self.models.push(snow);
         }
 
         /*
@@ -771,35 +745,32 @@ impl ScreenSaver for SnowScreenSaver {
         if self.old_config != *config {
             for model in &mut self.models {
                 //get (ParticleSystem)(Object) idiot
-                match model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
-                    Some(mut particle_system) => {
-                        if config.snowflake_count != self.old_config.snowflake_count {
-                            let delta = config.snowflake_count as i32 - self.old_config.snowflake_count as i32;
-                            if delta > 0 {
-                                particle_system.populate_random(delta.try_into().unwrap(), device);
-                                for i in self.old_config.snowflake_count..particle_system.instances.len() {
-                                    let particle = &mut particle_system.instances.instances[i];
-                                    let data = &mut particle_system.particle_data[i];
-                                    particle.position.z = 1.0 - particle.position.z * particle.position.z;
-                                    particle.scale = 1.0 - particle.position.z * 0.8;
-                                    particle.color.a = 1.0 - particle.position.z as f64;
-                                    data.velocity = Vector3::new(
-                                        (random::<f32>() * 0.1 - 0.4) * particle.scale,
-                                        (random::<f32>() * 0.1 + 0.5) * particle.scale,
-                                        0.0,
-                                    )
-                                }
+                if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                    if config.snowflake_count != self.old_config.snowflake_count {
+                        let delta = config.snowflake_count as i32 - self.old_config.snowflake_count as i32;
+                        if delta > 0 {
+                            particle_system.populate_random(delta.try_into().unwrap(), device);
+                            for i in self.old_config.snowflake_count..particle_system.instances.len() {
+                                let particle = &mut particle_system.instances.instances[i];
+                                let data = &mut particle_system.particle_data[i];
+                                particle.position.z = 1.0 - particle.position.z * particle.position.z;
+                                particle.scale = 1.0 - particle.position.z * 0.8;
+                                particle.color.a = 1.0 - particle.position.z as f64;
+                                data.velocity = Vector3::new(
+                                    (random::<f32>() * 0.1 - 0.4) * particle.scale,
+                                    (random::<f32>() * 0.1 + 0.5) * particle.scale,
+                                    0.0,
+                                )
                             }
-                            else {
-                                particle_system.instances.instances.truncate(config.snowflake_count);
-                                particle_system.particle_data.truncate(config.snowflake_count);
-                            }
-
-                            model.mesh.rebuild_instance_buffer(device);
-
                         }
+                        else {
+                            particle_system.instances.instances.truncate(config.snowflake_count);
+                            particle_system.particle_data.truncate(config.snowflake_count);
+                        }
+
+                        model.mesh.rebuild_instance_buffer(device);
+
                     }
-                    _ => {}
                 }
             }
             self.old_config = *config;
@@ -836,7 +807,7 @@ impl ScreenSaver for SnowScreenSaver {
 
 
             render_pass.set_bind_group(0, &model.material.bind_group, &[]);
-            render_pass.draw_mesh_instanced(&model.mesh, 0..model.mesh.instance_count() as u32);
+            render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
         }
     }
 }

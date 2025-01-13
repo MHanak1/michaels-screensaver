@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use crate::util::{Position2, Position3};
-use cgmath::num_traits::float::FloatCore;
 use std::ops::Add;
 use std::time::Duration;
 

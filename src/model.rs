@@ -1,10 +1,9 @@
 #![allow(dead_code)]
 
-use crate::instance::{Instance, InstanceRaw};
+use crate::instance::Instance;
 use crate::texture;
 use cgmath::Vector3;
 use downcast_rs::Downcast;
-use std::any::Any;
 use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -47,18 +46,18 @@ impl Vertex for ModelVertex {
 }
 
 pub trait DrawModel<'a> {
-    fn draw_mesh(&mut self, mesh: &'a Box<dyn Mesh>);
-    fn draw_mesh_instanced(&mut self, mesh: &'a Box<dyn Mesh>, instances: Range<u32>);
+    fn draw_mesh(&mut self, mesh: &'a dyn Mesh);
+    fn draw_mesh_instanced(&mut self, mesh: &'a dyn Mesh, instances: Range<u32>);
 }
 impl<'a, 'b> DrawModel<'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
-    fn draw_mesh(&mut self, mesh: &'b Box<dyn Mesh>) {
+    fn draw_mesh(&mut self, mesh: &'b dyn Mesh) {
         self.draw_mesh_instanced(mesh, 0..1);
     }
 
-    fn draw_mesh_instanced(&mut self, mesh: &'b Box<dyn Mesh>, instances: Range<u32>) {
+    fn draw_mesh_instanced(&mut self, mesh: &'b dyn Mesh, instances: Range<u32>) {
         mesh.draw_self_instanced(self, instances);
     }
 }
@@ -166,12 +165,12 @@ impl ModelMesh {
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&vertices.as_slice()),
+            contents: bytemuck::cast_slice(vertices.as_slice()),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
-            contents: bytemuck::cast_slice(&indices),
+            contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 

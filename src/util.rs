@@ -1,13 +1,11 @@
 #![allow(dead_code)]
 
-use crate::instance::Instance;
-use crate::model::{Material, Mesh, Model, ModelMesh};
+use crate::model::{Material, Model, ModelMesh};
 use crate::particle::{ParticleSystem, ParticleSystemData};
 use crate::texture::Texture;
 use cgmath::num_traits::float::FloatCore;
 use cgmath::num_traits::{clamp, Num};
 use cgmath::{Vector3, Zero};
-use prisma::FromColor;
 use prisma::{Hsv, Rgb};
 use rand::Rng;
 use std::ops::{Index, IndexMut};
@@ -19,9 +17,7 @@ pub fn compare_colors_ignoring_alpha(left: Color, right: Color) -> bool{
 }
 pub fn random_color() -> Color {
     let hsv = Hsv::new(
-        angular_units::Turns {
-            0: (rand::random::<f32>()),
-        },
+        angular_units::Turns(rand::random::<f32>()),
         1.0,
         1.0,
     );

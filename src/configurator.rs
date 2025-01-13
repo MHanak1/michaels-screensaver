@@ -1,20 +1,12 @@
 use crate::screensaver::{BallColorMode, ScreenSaverType};
-use crate::{run_with_config, screensaver, util};
-use cgmath::num_traits::ToPrimitive;
-use std::collections::HashMap;
+use crate::{run_with_config, screensaver};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::process::exit;
 use std::str::FromStr;
-use std::{process, thread};
-use std::ops::Deref;
-use std::sync::{Arc, LockResult, Mutex};
-use cfg_if::cfg_if;
+use std::thread;
+use std::sync::{Arc, Mutex};
 use config::Config;
-use egui::{FontData, FontDefinitions, FontFamily, FontTweak, TextStyle, Widget};
-use egui::text::Fonts;
-use egui::UiKind::CentralPanel;
-use wgpu::Color;
 
 pub enum ConfigPresets {
     BallsInfection,
@@ -53,7 +45,7 @@ impl Configurator {
         let mut toml = File::open(&config_path).unwrap();
         let mut toml_string = String::new();
         toml.read_to_string(&mut toml_string).unwrap();
-        use toml_edit::{value, DocumentMut};
+        use toml_edit::value;
         let mut doc = toml_edit::DocumentMut::from_str(toml_string.as_str()).unwrap();
 
         doc["screensaver"] = value(match self.screensaver {
@@ -74,7 +66,7 @@ impl Configurator {
             BallColorMode::Temperature => "temperature",
         });
         doc["balls"]["show_density"] = value(self.show_density);
-        doc["balls"]["target_display_density"] = value(self.target_display_density as f64);
+        doc["balls"]["target_display_density"] = value(self.target_display_density);
         doc["balls"]["color"] = value(self.color.to_hex()[0..7].to_string());
         doc["balls"]["region_size"] = value(self.region_size as f64);
         doc["balls"]["correct_ball_velocity"] = value(self.correct_ball_velocity);
@@ -163,7 +155,7 @@ impl Configurator {
                     .clone()
                     .try_deserialize()
                     .unwrap();
-                egui::Color32::from_hex(&*color_hex).unwrap_or(egui::Color32::WHITE)
+                egui::Color32::from_hex(&color_hex).unwrap_or(egui::Color32::WHITE)
             },
             show_density: balls
                 .get("show_density")
@@ -221,10 +213,10 @@ impl Configurator {
             ConfigPresets::BallsDVD => {
                 Self {
                     screensaver: ScreenSaverType::Balls,
-                    ball_count: 10,
-                    ball_speed: 0.15,
-                    ball_size: 0.3,
-                    color_mode: BallColorMode::Infection,
+                    ball_count: 1,
+                    ball_speed: 0.3,
+                    ball_size: 0.5,
+                    color_mode: BallColorMode::Random,
                     ..Default::default()
                 }
             }
@@ -295,14 +287,11 @@ impl eframe::App for ConfigUI {
                                     });
                                 ui.end_row();
                                 //don't ask me why it has to be this way
-                                match configurator.color_mode {
-                                    BallColorMode::Color => {
-                                        let mut color = [configurator.color.r() as f32 / 255.0, configurator.color.g() as f32 / 255.0, configurator.color.b() as f32 / 255.0];
-                                        ui.color_edit_button_rgb(&mut color);
-                                        configurator.color = egui::Color32::from_rgb((color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8);
-                                        ui.end_row();
-                                    }
-                                    _ => {}
+                                if configurator.color_mode == BallColorMode::Color {
+                                    let mut color = [configurator.color.r() as f32 / 255.0, configurator.color.g() as f32 / 255.0, configurator.color.b() as f32 / 255.0];
+                                    ui.color_edit_button_rgb(&mut color);
+                                    configurator.color = egui::Color32::from_rgb((color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8);
+                                    ui.end_row();
                                 };
                                 ui.add(egui::Checkbox::new(&mut configurator.show_density, "Show Density")).on_hover_text("change the opacity based on how many balls are in the surrounding regions and is influenced by their size.");
                                 ui.end_row();
