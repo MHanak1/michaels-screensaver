@@ -67,7 +67,6 @@ pub struct BallScreenSaver {
     inputs: [Option<[f32; 2]>; 6],
     first_input_handled: bool,
     actual_ball_speed: f32,
-    infected_balls: usize,
     //config
     color: Color,
     old_config: Configurator,
@@ -79,7 +78,6 @@ impl ScreenSaver for BallScreenSaver {
     {
         Self {
             balls: vec![],
-            infected_balls: 1,
             inputs: [None; 6],
             first_input_handled: false,
             color: util::color_from_hex(config.color.to_hex()).unwrap(),
@@ -180,6 +178,9 @@ impl ScreenSaver for BallScreenSaver {
         let mut total_velocity = 0.0;
         let mut velocity_updated = false;
 
+        let mut infected_balls = 0;
+        let infection_starting_color = util::random_color();
+
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
             match model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
@@ -230,7 +231,11 @@ impl ScreenSaver for BallScreenSaver {
                                             instance.color = self.color;
                                         }
                                         BallColorMode::Infection => {
-                                            instance.color = self.color
+                                            if i == 0 {
+                                                instance.color = self.color;
+                                            } else {
+                                                instance.color = infection_starting_color;
+                                            }
                                         }
                                         _ => {
                                             instance.color = Color {
@@ -248,19 +253,6 @@ impl ScreenSaver for BallScreenSaver {
                                 particle_system.instances.instances.truncate(config.ball_count as usize);
                                 particle_system.particle_data.truncate(config.ball_count as usize);
                             }
-
-                            let mut actually_infected = 0;
-                            for instance in particle_system
-                                .instances
-                                .iter_mut()
-                            {
-                                if instance.color == self.color
-                                {
-                                    actually_infected += 1;
-                                }
-                            }
-                            self.infected_balls =
-                                actually_infected;
 
                             should_rebuild_instance_buffer = true;
                         }
@@ -304,6 +296,14 @@ impl ScreenSaver for BallScreenSaver {
                             }
                         }
 
+                        if config.show_density != self.old_config.show_density {
+                            for instance in particle_system.instances.iter_mut() {
+                                if !config.show_density {
+                                    instance.color.a = 1.0;
+                                }
+                            }
+                        }
+
                         if should_rebuild_instance_buffer {
                             particle_system.rebuild_instance_buffer(&device);
                         }
@@ -323,11 +323,6 @@ impl ScreenSaver for BallScreenSaver {
                         return;
                     }
 
-                    /*
-                    for instance in &mut particle_system.instances {
-                        instance.color.a = instance.position.z as f64 * 10.0;
-                    }*/
-
                     particle_system.instances.bounding_box =
                         particle_system.particle_system_data.domain;
                     particle_system.instances.rebuild_regions();
@@ -339,6 +334,7 @@ impl ScreenSaver for BallScreenSaver {
                                 let mut density = 0;
                                 let instance = particle_system.instances[i];
                                 let mut velocity_if_correcting_it = 0.0;
+
 
                                 if config.correct_ball_velocity {
                                     velocity_if_correcting_it =
@@ -443,59 +439,14 @@ impl ScreenSaver for BallScreenSaver {
                                                         particle_system.instances[j].color = col;
                                                     }
                                                     BallColorMode::Infection => {
-                                                        if (other_instance.color == self.color
-                                                            || instance.color == self.color)
-                                                            && instance.color
-                                                                != other_instance.color
+                                                        if (util::compare_colors_ignoring_alpha(other_instance.color, self.color)
+                                                            || util::compare_colors_ignoring_alpha(instance.color, self.color))
+                                                            && ! util::compare_colors_ignoring_alpha(instance.color ,other_instance.color)
                                                         {
                                                             particle_system.instances[i].color =
                                                                 self.color;
                                                             particle_system.instances[j].color =
                                                                 self.color;
-                                                            if self.infected_balls + 1
-                                                                >= config.ball_count as usize
-                                                            {
-                                                                let mut actually_infected = 0;
-                                                                for instance in particle_system
-                                                                    .instances
-                                                                    .iter_mut()
-                                                                {
-                                                                    if instance.color == self.color
-                                                                    {
-                                                                        actually_infected += 1;
-                                                                    }
-                                                                }
-                                                                self.infected_balls =
-                                                                    actually_infected;
-                                                                if self.infected_balls
-                                                                    >= config.ball_count as usize
-                                                                {
-                                                                    let mut new_infection_color =
-                                                                        util::random_color();
-                                                                    while new_infection_color
-                                                                        == self.color
-                                                                    {
-                                                                        new_infection_color =
-                                                                            util::random_color();
-                                                                    }
-                                                                    util::random_color();
-                                                                    particle_system
-                                                                        .instances
-                                                                        .instances
-                                                                        .choose_mut(
-                                                                            &mut rand::thread_rng(),
-                                                                        )
-                                                                        .unwrap()
-                                                                        .color =
-                                                                        new_infection_color;
-
-                                                                    self.color =
-                                                                        new_infection_color;
-                                                                    self.infected_balls = 1;
-                                                                }
-                                                            } else {
-                                                                self.infected_balls += 1;
-                                                            }
                                                         }
                                                     }
                                                     _ => {}
@@ -532,6 +483,11 @@ impl ScreenSaver for BallScreenSaver {
                                             a: 1.0,
                                         }
                                     }
+                                    BallColorMode::Infection => {
+                                        if util::compare_colors_ignoring_alpha(instance.color, self.color) {
+                                            infected_balls += 1;
+                                        }
+                                    }
                                     _ => {}
                                 }
                                 if !config.show_density && config.show_density {
@@ -549,12 +505,18 @@ impl ScreenSaver for BallScreenSaver {
                         }
                     }
 
+                    if infected_balls >= config.ball_count {
+                        self.color = util::random_color();
+                        particle_system.instances.instances.choose_mut(&mut rand::thread_rng()).unwrap().color = self.color;
+                    }
+
                     particle_system.update_instance_buffer(queue);
                 }
                 None => {}
             };
             model.update(dt, queue);
         }
+
 
         self.actual_ball_speed = total_velocity / config.ball_count as f32;
         /*
@@ -617,7 +579,7 @@ impl ScreenSaver for BallScreenSaver {
         }
 
         let old_input = self.inputs[id as usize];
-        const brush_size: f32 = 0.15;
+        const BRUSH_SIZE: f32 = 0.15;
         match old_input {
             Some(old_input) => {
                 for model in &mut self.balls {
@@ -637,10 +599,10 @@ impl ScreenSaver for BallScreenSaver {
                                     0,
                                     particle_system.instances.regions_y - 1,
                                 ),
-                                (particle_system.instances.regions_y as f32 / 2.0 * brush_size)
+                                (particle_system.instances.regions_y as f32 / 2.0 * BRUSH_SIZE)
                                     .ceil() as u32,
                             ) {
-                                //if particle_system.instances[i].position.distance2(Vector3::new(position[0], position[1], 0.0)) < brush_size * brush_size {
+                                //if particle_system.instances[i].position.distance2(Vector3::new(position[0], position[1], 0.0)) < BRUSH_SIZE * BRUSH_SIZE {
                                 particle_system.particle_data[i]
                                     .velocity
                                     .add_assign(Vector3::new(
@@ -861,7 +823,7 @@ impl ScreenSaver for SnowScreenSaver {
         }
     }
 
-    fn handle_input(&mut self, position: [f32; 2], id: u64, enabled: bool) -> bool {
+    fn handle_input(&mut self, _position: [f32; 2], _id: u64, _enabled: bool) -> bool {
         false
     }
 

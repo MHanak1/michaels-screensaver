@@ -14,6 +14,9 @@ use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
 use wgpu::{BindGroupLayout, Color, Device};
 
+pub fn compare_colors_ignoring_alpha(left: Color, right: Color) -> bool{
+    left.r == right.r && left.g == right.g && left.b == right.b
+}
 pub fn random_color() -> Color {
     let hsv = Hsv::new(
         angular_units::Turns {

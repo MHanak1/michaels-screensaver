@@ -3,7 +3,7 @@
 
 use eframe::{HardwareAcceleration, Renderer};
 use michaels_screensaver::configurator::{ConfigUI, Configurator};
-use michaels_screensaver::{configurator, get_config, DEFAULT_CONFIG};
+use michaels_screensaver::{get_config, DEFAULT_CONFIG};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -36,7 +36,7 @@ fn main() {
     env_logger::init();
 
 
-    let mut config_app = ConfigUI{
+    let config_app = ConfigUI{
         configurator: Arc::new(Mutex::new(Configurator::from_config(get_config()))),
     };
 
@@ -56,7 +56,7 @@ fn main() {
             eframe::run_native(
                 "My egui App",
                 options,
-                Box::new(|cc| Ok(Box::new(config_app))),
+                Box::new(|_cc| Ok(Box::new(config_app))),
             )
             .expect("TODO: panic message");
         }
@@ -69,7 +69,7 @@ fn main() {
             eframe::run_native(
                 "Screensaver Config",
                 options,
-                Box::new(|cc| Ok(Box::new(config_app))),
+                Box::new(|_cc| Ok(Box::new(config_app))),
             )
             .expect("eframe brokey");
         } else {

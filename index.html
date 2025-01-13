@@ -2,7 +2,7 @@
 <html lang="en-US">
     <head>
         <meta charset="utf-8" />
-        <title>Merry Christmas!</title>
+        <title>Screensaver - MHanak.net</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="stylesheet" href="index.css">
         <script type="module">
@@ -15,29 +15,14 @@
             function TriggerMenuDropdown() {
                 document.getElementById("dropdown").classList.toggle("show");
             }
-
-            /*
-            // Close the dropdown if the user clicks outside of it
-            window.onclick = function(event) {
-                if (!event.target.matches('.dropbtn') && !event.target.matches('.dropdown-content')) {
-                    var dropdowns = document.getElementsByClassName("dropdown-content");
-                    var i;
-                    for (i = 0; i < dropdowns.length; i++) {
-                        var openDropdown = dropdowns[i];
-                        if (openDropdown.classList.contains('show')) {
-                            openDropdown.classList.remove('show');
-                        }
-                    }
-                }
-            }*/
         </script>
     </head>
     <body>
         <canvas id="screensaver"></canvas>
         <div class="dropdown">
             <button onclick="TriggerMenuDropdown()" class="dropbtn">Settings</button>
-            <div id="dropdown" class="dropdown-content" style="width: 300px; height: 400px;">
-                <canvas id="config_canvas" width="300" height="400"></canvas>
+            <div id="dropdown" class="dropdown-content" style="width: 250px; height: 300px;">
+                <canvas id="config_canvas" width="250" height="300"></canvas>
             </div>
         </div>
 

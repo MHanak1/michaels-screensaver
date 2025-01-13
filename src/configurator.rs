@@ -7,9 +7,12 @@ use std::io::{Read, Write};
 use std::process::exit;
 use std::str::FromStr;
 use std::{process, thread};
+use std::ops::Deref;
 use std::sync::{Arc, LockResult, Mutex};
 use cfg_if::cfg_if;
 use config::Config;
+use egui::{FontData, FontDefinitions, FontFamily, FontTweak, TextStyle, Widget};
+use egui::text::Fonts;
 use egui::UiKind::CentralPanel;
 use wgpu::Color;
 
@@ -154,7 +157,7 @@ impl Configurator {
                 None => BallColorMode::Color,
             },
             color: {
-                let mut color_hex: String = balls
+                let color_hex: String = balls
                     .get("color")
                     .unwrap()
                     .clone()
@@ -257,7 +260,6 @@ impl eframe::App for ConfigUI {
         let result = self.configurator.lock();
         match result {
             Ok(mut configurator) => {
-                ctx.set_zoom_factor(1.0); //no zoom
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("Config");
                     egui::ComboBox::from_label("Screensaver")
@@ -334,6 +336,7 @@ impl eframe::App for ConfigUI {
                                             *configurator = Configurator::from_preset(ConfigPresets::Colors);
                                         }
                                     });
+                                    ui.add_space(10.0);
                                 });
                                 ui.end_row();
                             }
