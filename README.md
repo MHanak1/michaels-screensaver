@@ -19,7 +19,7 @@ A screensaver app written in Rust, using [wgpu](https://wgpu.rs/) for rendering,
 
 \*\*I know WebGL doesn't work on Chromium on Linux by default
 ### Windows
-* Download the `michaels-screensaver.scr` file
+* Download the `michaels-screensaver.scr` file from the Releases section on the right
 * Once downloaded, right-click the file -> Install
 * Done!
 * If you want to configure it, either do it through settings, or right-click -> Configure
