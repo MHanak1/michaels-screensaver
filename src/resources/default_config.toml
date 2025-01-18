@@ -14,7 +14,7 @@ size = 0.05
 #temperature - makes it so the color's hue depends on a given particle's velocity. may impact perfromance
 #infection - one ball is chosen, it has a different color to every other ball and it is infected. ever ball that touches an infected ball becomes infected itself. after all balls get infected a new one is chosen
 color_mode = "infection"
-color = "#ff00ff"
+color = "#22ff22"
 #makes it so the opacity of a ball is dependent on the ammount of balls in the surrounding regions. if the region size is lower, the contrast will be higher
 show_density = true
 #used for the density color mode. the determines what density is considered "high"

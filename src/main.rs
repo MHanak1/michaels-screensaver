@@ -6,8 +6,8 @@ use michaels_screensaver::configurator::{ConfigUI, Configurator};
 use michaels_screensaver::{get_config, DEFAULT_CONFIG};
 use std::fs::File;
 use std::io::Write;
-use std::{env, process};
 use std::sync::{Arc, Mutex};
+use std::{env, process};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -35,9 +35,9 @@ fn main() {
     env_logger::init();
 
 
-    let config_app = ConfigUI{
-        configurator: Arc::new(Mutex::new(Configurator::from_config(get_config()))),
-    };
+    let config_app = ConfigUI::new(Arc::new(Mutex::new(
+        Configurator::from_config(get_config()),
+    )));
 
     //https://stackoverflow.com/questions/5165133/how-can-i-write-a-screen-saver-for-windows-in-c
     if cfg!(target_os = "windows") {
@@ -70,13 +70,15 @@ fn main() {
                 options,
                 Box::new(|_cc| Ok(Box::new(config_app))),
             )
-                .expect("eframe brokey");
+            .expect("eframe brokey");
         } else if args.contains(&"-h".to_string()) || args.contains(&"--help".to_string()) {
             println!("--help or -h: show this message");
             println!("--config or -c: open the configuration GUI");
-            println!("the configuration file is located at: {}", config_path.display());
-        }
-        else {
+            println!(
+                "the configuration file is located at: {}",
+                config_path.display()
+            );
+        } else {
             pollster::block_on(michaels_screensaver::run());
         }
     }

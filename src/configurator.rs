@@ -1,12 +1,19 @@
 use crate::screensaver::{BallColorMode, ScreenSaverType};
 use crate::{run_with_config, screensaver};
+use config::Config;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::ops::{Add, AddAssign};
 use std::process::exit;
 use std::str::FromStr;
-use std::thread;
 use std::sync::{Arc, Mutex};
-use config::Config;
+use std::thread;
+#[cfg(target_arch = "wasm32")]
+use web_sys::window;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+use web_time::{Duration, Instant};
 
 pub enum ConfigPresets {
     BallsInfection,
@@ -34,6 +41,8 @@ pub struct Configurator {
     pub(crate) target_display_density: f64,
     pub(crate) region_size: f32,
     pub(crate) correct_ball_velocity: bool,
+
+    //Internal Use - Not Configurable
     pub(crate) preview_window: bool,
 }
 
@@ -48,10 +57,7 @@ impl Configurator {
         use toml_edit::value;
         let mut doc = toml_edit::DocumentMut::from_str(toml_string.as_str()).unwrap();
 
-        doc["screensaver"] = value(match self.screensaver {
-            ScreenSaverType::Snow => "snow",
-            ScreenSaverType::Balls => "balls",
-        });
+        doc["screensaver"] = value(self.screensaver.to_string());
         doc["fullscreen"] = value(self.fullscreen);
         //Snow
         doc["snow"]["snowflake_count"] = value(self.snowflake_count as i64);
@@ -59,12 +65,7 @@ impl Configurator {
         doc["balls"]["speed"] = value(self.ball_speed as f64);
         doc["balls"]["count"] = value(self.ball_count as i64);
         doc["balls"]["size"] = value(self.ball_size as f64);
-        doc["balls"]["color_mode"] = value(match self.color_mode {
-            BallColorMode::Random => "random",
-            BallColorMode::Color => "color",
-            BallColorMode::Infection => "infection",
-            BallColorMode::Temperature => "temperature",
-        });
+        doc["balls"]["color_mode"] = value(self.color_mode.to_string());
         doc["balls"]["show_density"] = value(self.show_density);
         doc["balls"]["target_display_density"] = value(self.target_display_density);
         doc["balls"]["color"] = value(self.color.to_hex()[0..7].to_string());
@@ -73,6 +74,55 @@ impl Configurator {
 
         let mut toml = File::create(config_path).unwrap();
         toml.write_all(doc.to_string().as_bytes()).unwrap();
+    }
+
+    pub fn generate_url(&self) -> String {
+        let dc = Self::default();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut url = String::from("https://mhanak.net/screensaver/");
+        #[cfg(target_arch = "wasm32")]
+        let mut url = window()
+            .unwrap()
+            .location()
+            .to_string()
+            .as_string()
+            .unwrap();
+        url += format!("?screensaver={}", self.screensaver.to_string()).as_str();
+
+        if dc.snowflake_count != self.snowflake_count {
+            url += format!("&snowflake_count={}", self.snowflake_count).as_str()
+        }
+
+        if dc.ball_count != self.ball_count {
+            url += format!("&count={}", self.ball_count).as_str()
+        }
+        if dc.ball_speed != self.ball_speed {
+            url += format!("&speed={}", self.ball_speed).as_str()
+        }
+        if dc.ball_size != self.ball_size {
+            url += format!("&size={}", self.ball_size).as_str()
+        }
+        if dc.color_mode != self.color_mode {
+            url += format!("&color_mode={}", self.color_mode.to_string()).as_str()
+        }
+        if dc.color != self.color {
+            url += format!("color={}", self.color.to_hex()[0..7].replace("#", "%23")).as_str()
+        }
+        if dc.show_density != self.show_density {
+            url += format!("show_density={}", self.show_density).as_str()
+        }
+        if dc.target_display_density != self.target_display_density {
+            url += format!("target_display_density={}", self.target_display_density).as_str()
+        }
+        if dc.region_size != self.region_size {
+            url += format!("region_size={}", self.region_size).as_str()
+        }
+        if dc.correct_ball_velocity != self.correct_ball_velocity {
+            url += format!("correct_ball_velocity={}", self.correct_ball_velocity).as_str()
+        }
+
+        url
     }
 
     pub fn from_config(config: Config) -> Self {
@@ -175,61 +225,51 @@ impl Configurator {
 
     pub fn from_preset(preset: ConfigPresets) -> Self {
         match preset {
-            ConfigPresets::BallsInfection => {
-                Self {
-                    screensaver: ScreenSaverType::Balls,
-                    ball_count: 100,
-                    ball_speed: 0.2,
-                    ball_size: 0.2,
-                    color_mode: BallColorMode::Infection,
-                    ..Default::default()
-                }
-            }
-            ConfigPresets::BallsLava => {
-                Self {
-                    screensaver: ScreenSaverType::Balls,
-                    ball_count: 10000,
-                    ball_speed: 0.05,
-                    ball_size: 0.05,
-                    color_mode: BallColorMode::Temperature,
-                    show_density: true,
-                    region_size: 1.0,
-                    ..Default::default()
-                }
-            }
-            ConfigPresets::BallsGasSimulation => {
-                Self {
-                    screensaver: ScreenSaverType::Balls,
-                    ball_count: 50000,
-                    ball_speed: 0.1,
-                    ball_size: 0.03,
-                    color_mode: BallColorMode::Color,
-                    show_density: true,
-                    region_size: 0.5,
-                    correct_ball_velocity: false,
-                    ..Default::default()
-                }
-            }
-            ConfigPresets::BallsDVD => {
-                Self {
-                    screensaver: ScreenSaverType::Balls,
-                    ball_count: 1,
-                    ball_speed: 0.3,
-                    ball_size: 0.5,
-                    color_mode: BallColorMode::Random,
-                    ..Default::default()
-                }
-            }
-            ConfigPresets::Colors => {
-                Self {
-                    screensaver: ScreenSaverType::Balls,
-                    ball_count: 500,
-                    ball_speed: 0.2,
-                    ball_size: 0.1,
-                    color_mode: BallColorMode::Random,
-                    ..Default::default()
-                }
-            }
+            ConfigPresets::BallsInfection => Self {
+                screensaver: ScreenSaverType::Balls,
+                ball_count: 100,
+                ball_speed: 0.2,
+                ball_size: 0.2,
+                color_mode: BallColorMode::Infection,
+                ..Default::default()
+            },
+            ConfigPresets::BallsLava => Self {
+                screensaver: ScreenSaverType::Balls,
+                ball_count: 10000,
+                ball_speed: 0.05,
+                ball_size: 0.05,
+                color_mode: BallColorMode::Temperature,
+                show_density: true,
+                region_size: 1.0,
+                ..Default::default()
+            },
+            ConfigPresets::BallsGasSimulation => Self {
+                screensaver: ScreenSaverType::Balls,
+                ball_count: 50000,
+                ball_speed: 0.1,
+                ball_size: 0.03,
+                color_mode: BallColorMode::Color,
+                show_density: true,
+                region_size: 0.5,
+                correct_ball_velocity: false,
+                ..Default::default()
+            },
+            ConfigPresets::BallsDVD => Self {
+                screensaver: ScreenSaverType::Balls,
+                ball_count: 1,
+                ball_speed: 0.3,
+                ball_size: 0.5,
+                color_mode: BallColorMode::Random,
+                ..Default::default()
+            },
+            ConfigPresets::Colors => Self {
+                screensaver: ScreenSaverType::Balls,
+                ball_count: 500,
+                ball_speed: 0.2,
+                ball_size: 0.1,
+                color_mode: BallColorMode::Random,
+                ..Default::default()
+            },
         }
     }
 }
@@ -241,7 +281,18 @@ impl Default for Configurator {
 }
 
 pub struct ConfigUI {
-    pub configurator:  Arc<Mutex<Configurator>>,
+    pub configurator: Arc<Mutex<Configurator>>,
+    color_picker_color: [f32; 3],
+    pub clicked_gen_url: Instant,
+}
+impl ConfigUI {
+    pub fn new(configurator: Arc<Mutex<Configurator>>) -> Self {
+        Self {
+            configurator,
+            color_picker_color: [f32::NAN, f32::NAN, f32::NAN],
+            clicked_gen_url: Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(Instant::now()), //for some reason subtracting from an instant doesn't work on WASM
+        }
+    }
 }
 
 impl eframe::App for ConfigUI {
@@ -252,6 +303,13 @@ impl eframe::App for ConfigUI {
         let result = self.configurator.lock();
         match result {
             Ok(mut configurator) => {
+                if self.color_picker_color[0].is_nan() {
+                    self.color_picker_color = [
+                        configurator.color.r() as f32 / 255.0,
+                        configurator.color.g() as f32 / 255.0,
+                        configurator.color.b() as f32 / 255.0,
+                    ];
+                }
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("Config");
                     egui::ComboBox::from_label("Screensaver")
@@ -288,9 +346,8 @@ impl eframe::App for ConfigUI {
                                 ui.end_row();
                                 //don't ask me why it has to be this way
                                 if configurator.color_mode == BallColorMode::Color {
-                                    let mut color = [configurator.color.r() as f32 / 255.0, configurator.color.g() as f32 / 255.0, configurator.color.b() as f32 / 255.0];
-                                    ui.color_edit_button_rgb(&mut color);
-                                    configurator.color = egui::Color32::from_rgb((color[0] * 255.0) as u8, (color[1] * 255.0) as u8, (color[2] * 255.0) as u8);
+                                    ui.color_edit_button_rgb(&mut self.color_picker_color);
+                                    configurator.color = egui::Color32::from_rgb((self.color_picker_color[0] * 255.0) as u8, (self.color_picker_color[1] * 255.0) as u8, (self.color_picker_color[2] * 255.0) as u8);
                                     ui.end_row();
                                 };
                                 ui.add(egui::Checkbox::new(&mut configurator.show_density, "Show Density")).on_hover_text("change the opacity based on how many balls are in the surrounding regions and is influenced by their size.");
@@ -342,8 +399,8 @@ impl eframe::App for ConfigUI {
                                 exit(0);
                             }
                             if ui.add(egui::Button::new("Reset Settings")).clicked() {
-                                configurator.preview_window = true;
                                 *configurator = Configurator::default();
+                                self.color_picker_color = [f32::INFINITY, f32::INFINITY, f32::INFINITY];
                             }
                             #[cfg(not(target_arch = "wasm32"))]
                             ui.separator();
@@ -354,6 +411,14 @@ impl eframe::App for ConfigUI {
                                 thread::spawn(move || {
                                     pollster::block_on(run_with_config(config));
                                 });
+                            }
+                            let url_btn = ui.add(egui::Button::new("Generate URL"));
+                            if url_btn.clicked() {
+                                self.clicked_gen_url = Instant::now();
+                                ctx.copy_text(configurator.generate_url());
+                            }
+                            if Instant::now().duration_since(self.clicked_gen_url) < Duration::from_secs(1) {
+                                url_btn.show_tooltip_text("Copied Link");
                             }
                         });
                         ui.end_row();

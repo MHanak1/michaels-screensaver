@@ -3,6 +3,7 @@
 use crate::model::{Material, Model, ModelMesh};
 use crate::particle::{ParticleSystem, ParticleSystemData};
 use crate::texture::Texture;
+use angular_units::{Angle, Turns};
 use cgmath::num_traits::float::FloatCore;
 use cgmath::num_traits::{clamp, Num};
 use cgmath::{Vector3, Zero};
@@ -10,18 +11,13 @@ use prisma::{Hsv, Rgb};
 use rand::Rng;
 use std::ops::{Index, IndexMut};
 use std::slice::SliceIndex;
-use angular_units::{Angle, Turns};
 use wgpu::{BindGroupLayout, Color, Device};
 
-pub fn compare_colors_ignoring_alpha(left: Color, right: Color) -> bool{
+pub fn compare_colors_ignoring_alpha(left: Color, right: Color) -> bool {
     left.r == right.r && left.g == right.g && left.b == right.b
 }
 pub fn random_color() -> Color {
-    let hsv = Hsv::new(
-        angular_units::Turns(rand::random::<f32>()),
-        1.0,
-        1.0,
-    );
+    let hsv = Hsv::new(angular_units::Turns(rand::random::<f32>()), 1.0, 1.0);
     let rgb = Rgb::from(hsv);
     Color {
         r: rgb.red(),
@@ -33,20 +29,23 @@ pub fn random_color() -> Color {
 
 pub fn random_distinct_color(other_color: Color) -> Color {
     let old_rgb = Rgb::new(other_color.r, other_color.g, other_color.b);
-    let old_hsv: Hsv<f64, Turns<f64>>= Hsv::from(old_rgb);
+    let old_hsv: Hsv<f64, Turns<f64>> = Hsv::from(old_rgb);
 
     let mut new_hsv = old_hsv.clone();
 
     loop {
-        new_hsv = Hsv::new(
-            angular_units::Turns(rand::random::<f64>()),
-            1.0,
-            1.0,
-        );
+        new_hsv = Hsv::new(angular_units::Turns(rand::random::<f64>()), 1.0, 1.0);
         let mut delta = old_hsv.hue().scalar() - new_hsv.hue().scalar();
-        if delta > 0.5 {delta -= 1.0}
-        else if delta < -0.5 {delta += 1.0}
-        println!("old hue: {}, new hue: {}", old_hsv.hue().scalar(), new_hsv.hue().scalar());
+        if delta > 0.5 {
+            delta -= 1.0
+        } else if delta < -0.5 {
+            delta += 1.0
+        }
+        println!(
+            "old hue: {}, new hue: {}",
+            old_hsv.hue().scalar(),
+            new_hsv.hue().scalar()
+        );
         println!("delta: {}", delta);
         if delta > 0.2 {
             break;
@@ -81,6 +80,8 @@ pub struct InstanceContainer<T: Position2> {
     pub regions_x: usize,
     pub regions_y: usize,
     pub regions: Vec<Vec<usize>>,
+    //pub regions_new: Vec<usize>,
+    //pub instances_sorted: Vec<usize>,
 }
 
 impl<T: Position2> InstanceContainer<T> {
@@ -95,6 +96,8 @@ impl<T: Position2> InstanceContainer<T> {
             regions_x,
             regions_y,
             regions: vec![vec![]; regions_x * regions_y],
+            //regions_new: vec![0; regions_x * regions_y + 1],
+            //instances_sorted: vec![0; instances.len()],
         }
     }
 

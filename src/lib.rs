@@ -1,3 +1,4 @@
+pub mod configurator;
 mod instance;
 mod model;
 mod particle;
@@ -5,15 +6,14 @@ mod screensaver;
 mod shaders;
 mod texture;
 mod util;
-pub mod configurator;
 
-use wgpu::BindGroupLayout;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
+use wgpu::BindGroupLayout;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::WindowBuilderExtWebSys;
 #[cfg(target_arch = "wasm32")]
@@ -26,8 +26,8 @@ use cgmath::Matrix4;
 use config::{Config, FileFormat};
 use model::Vertex;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
 use std::process;
+use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 use wgpu::Limits;
 use winit::dpi::Size;
@@ -65,13 +65,18 @@ pub fn get_config() -> Config {
     let mut params_toml = String::new();
     for param in url_params.keys() {
         //log::error!("{}", param.unwrap().as_string().unwrap());
+        let key_str = param.clone().unwrap().as_string().unwrap();
         params_toml.push_str(&*format!(
             "{} = \"{}\"\n",
-            param.clone().unwrap().as_string().unwrap(),
-            url_params
-                .get(&*param.unwrap().as_string().unwrap())
-                .unwrap()
+            key_str,
+            url_params.get(key_str.as_str()).unwrap()
         ));
+        if key_str == "screensaver" {
+            params_toml.push_str(&*format!(
+                "[{}]\n",
+                url_params.get(key_str.as_str()).unwrap()
+            ));
+        }
     }
 
     Config::builder()
@@ -206,24 +211,26 @@ impl CameraController {
         let move_delta = 0.1;
 
         for key in self.pressed_keys.iter() {
-            if let Key::Character(char) = key { match camera.camera_type {
-                CameraType::Orthographic() => match char.to_ascii_lowercase().as_str() {
-                    "w" => camera.eye.y += move_delta,
-                    "s" => camera.eye.y -= move_delta,
-                    "d" => camera.eye.x += move_delta,
-                    "a" => camera.eye.x -= move_delta,
-                    _ => {}
-                },
-                CameraType::Perspective(_) => match char.to_ascii_lowercase().as_str() {
-                    "s" => camera.eye.z -= move_delta,
-                    "w" => camera.eye.z += move_delta,
-                    "e" => camera.eye.y -= move_delta,
-                    "q" => camera.eye.y += move_delta,
-                    "a" => camera.eye.x -= move_delta,
-                    "d" => camera.eye.x += move_delta,
-                    _ => {}
-                },
-            } }
+            if let Key::Character(char) = key {
+                match camera.camera_type {
+                    CameraType::Orthographic() => match char.to_ascii_lowercase().as_str() {
+                        "w" => camera.eye.y += move_delta,
+                        "s" => camera.eye.y -= move_delta,
+                        "d" => camera.eye.x += move_delta,
+                        "a" => camera.eye.x -= move_delta,
+                        _ => {}
+                    },
+                    CameraType::Perspective(_) => match char.to_ascii_lowercase().as_str() {
+                        "s" => camera.eye.z -= move_delta,
+                        "w" => camera.eye.z += move_delta,
+                        "e" => camera.eye.y -= move_delta,
+                        "q" => camera.eye.y += move_delta,
+                        "a" => camera.eye.x -= move_delta,
+                        "d" => camera.eye.x += move_delta,
+                        _ => {}
+                    },
+                }
+            }
         }
     }
 }
@@ -593,12 +600,12 @@ impl<'a> State<'a> {
 
     fn input(&mut self, event: &WindowEvent) -> bool {
         if !self.camera_controller.process_events(event) {
-            if self.screensaver_type == ScreenSaverType::Snow { if let WindowEvent::CursorMoved { position, .. } = event {
-                self.camera.target.x =
-                    -(position.x as f32 / self.size.width as f32) + 0.5;
-                self.camera.target.y =
-                    (position.y as f32 / self.size.height as f32) - 0.5;
-            } };
+            if self.screensaver_type == ScreenSaverType::Snow {
+                if let WindowEvent::CursorMoved { position, .. } = event {
+                    self.camera.target.x = -(position.x as f32 / self.size.width as f32) + 0.5;
+                    self.camera.target.y = (position.y as f32 / self.size.height as f32) - 0.5;
+                }
+            };
             match event {
                 WindowEvent::CursorMoved { position, .. } => self.screensaver.handle_input(
                     [
@@ -616,10 +623,10 @@ impl<'a> State<'a> {
                             (position.y as f32 / self.size.height as f32) * 2.0 - 1.0,
                         ],
                         touch.id + 1,
-                        matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved)
+                        matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved),
                     )
                 }
-                _ => {false}
+                _ => false,
             }
         } else {
             true
@@ -641,10 +648,21 @@ impl<'a> State<'a> {
                 ScreenSaverType::Balls => Box::new(screensaver::BallScreenSaver::new(*config)),
             };
             self.screensaver_type = config.screensaver;
-            self.screensaver.setup(Size::from(self.size), config, &self.device, &self.queue, &self.texture_bind_group_layout)
-
+            self.screensaver.setup(
+                Size::from(self.size),
+                config,
+                &self.device,
+                &self.queue,
+                &self.texture_bind_group_layout,
+            )
         }
-        self.screensaver.update(Size::from(self.size), config, &self.device, &self.queue, Instant::now().duration_since(self.last_updated));
+        self.screensaver.update(
+            Size::from(self.size),
+            config,
+            &self.device,
+            &self.queue,
+            Instant::now().duration_since(self.last_updated),
+        );
         self.background_color = self.screensaver.get_background_color();
 
         cfg_if::cfg_if! {
@@ -743,9 +761,7 @@ pub async fn run() {
 pub async fn run_with_config_window() {
     let configurator = Configurator::from_config(get_config());
     let configurator = Arc::new(Mutex::new(configurator));
-    let config_ui = ConfigUI {
-        configurator: Arc::clone(&configurator),
-    };
+    let config_ui = ConfigUI::new(Arc::clone(&configurator));
 
     let web_options = eframe::WebOptions::default();
 
@@ -765,13 +781,8 @@ pub async fn run_with_config_window() {
         .expect("config_canvas was not a HtmlCanvasElement");
 
     let _start_result = eframe::WebRunner::new()
-        .start(
-            canvas,
-            web_options,
-            Box::new(|cc| Ok(Box::new(config_ui))),
-        )
+        .start(canvas, web_options, Box::new(|cc| Ok(Box::new(config_ui))))
         .await;
-
 }
 
 pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
@@ -783,12 +794,10 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
     {
         log::info!("Starting main loop");
         #[cfg(target_arch = "wasm32")]
-        let event_loop: Result<EventLoop<()>, EventLoopError> = EventLoopBuilder::default()
-            .build();
+        let event_loop: Result<EventLoop<()>, EventLoopError> = EventLoopBuilder::default().build();
         #[cfg(not(target_arch = "wasm32"))]
-        let event_loop: Result<EventLoop<()>, EventLoopError> = EventLoopBuilder::default()
-            .with_any_thread(true)
-            .build();
+        let event_loop: Result<EventLoop<()>, EventLoopError> =
+            EventLoopBuilder::default().with_any_thread(true).build();
 
         match event_loop {
             Ok(event_loop) => {
@@ -822,18 +831,17 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                 };
 
                 let mut state = match configurator.lock() {
-                    Ok(configurator) => {
-                        State::new(&window, &configurator).await
-                    }
+                    Ok(configurator) => State::new(&window, &configurator).await,
                     Err(e) => panic!("failed to lock configurator: {}", e),
                 };
 
                 let result = event_loop.run(|event, control_flow| {
                     if let Ok(configurator) = configurator.lock() {
                         if let Event::WindowEvent {
-                                ref event,
-                                window_id,
-                            } = event {
+                            ref event,
+                            window_id,
+                        } = event
+                        {
                             if !state.input(event) && window_id == state.window().id() {
                                 match event {
                                     #[cfg(not(target_arch = "wasm32"))]
@@ -852,7 +860,7 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                                             control_flow.exit();
                                             process::exit(0);
                                         }
-                                    },
+                                    }
                                     //#[cfg(not(debug_assertions))]
                                     #[cfg(not(target_arch = "wasm32"))]
                                     WindowEvent::KeyboardInput {
@@ -870,7 +878,9 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                                                     Key::Named(NamedKey::AltGraph) => {}
                                                     _ => control_flow.exit(),
                                                 }
-                                            } else if configurator.fullscreen && !configurator.preview_window {
+                                            } else if configurator.fullscreen
+                                                && !configurator.preview_window
+                                            {
                                                 control_flow.exit();
                                                 process::exit(0);
                                             }
@@ -879,11 +889,11 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                                     #[cfg(target_arch = "wasm32")]
                                     WindowEvent::KeyboardInput {
                                         event:
-                                        KeyEvent {
-                                            state: ElementState::Pressed,
-                                            logical_key,
-                                            ..
-                                        },
+                                            KeyEvent {
+                                                state: ElementState::Pressed,
+                                                logical_key,
+                                                ..
+                                            },
                                         ..
                                     } => match logical_key {
                                         Key::Named(NamedKey::Escape) => {
@@ -929,9 +939,10 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                                         match state.render() {
                                             Ok(_) => {}
                                             // Reconfigure the surface if it's lost or outdated
-                                            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                                                state.resize(window.inner_size())
-                                            }
+                                            Err(
+                                                wgpu::SurfaceError::Lost
+                                                | wgpu::SurfaceError::Outdated,
+                                            ) => state.resize(window.inner_size()),
                                             // The system is out of memory, we should probably quit
                                             Err(wgpu::SurfaceError::OutOfMemory) => {
                                                 log::error!("Out Of Memory");

@@ -21,6 +21,15 @@ pub(crate) enum ScreenSaverType {
     Snow,
     Balls,
 }
+
+impl ToString for ScreenSaverType {
+    fn to_string(&self) -> String {
+        match self {
+            ScreenSaverType::Snow => "snow".to_string(),
+            ScreenSaverType::Balls => "balls".to_string(),
+        }
+    }
+}
 /*
 lazy_static! {
     pub static ref SCREEN_SAVER_NAMES: HashMap<String, ScreenSaverType> =
@@ -42,7 +51,14 @@ pub trait ScreenSaver {
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
     );
-    fn update(&mut self, size: Size, config: &Configurator, device: &wgpu::Device, queue: &wgpu::Queue, dt: Duration);
+    fn update(
+        &mut self,
+        size: Size,
+        config: &Configurator,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dt: Duration,
+    );
     fn resize(&mut self, old_ratio: f32, new_ratio: f32);
     fn get_background_color(&self) -> wgpu::Color;
     fn handle_input(&mut self, position: [f32; 2], id: u64, active: bool) -> bool;
@@ -55,6 +71,17 @@ pub(crate) enum BallColorMode {
     Color,
     Infection,
     Temperature,
+}
+
+impl ToString for BallColorMode {
+    fn to_string(&self) -> String {
+        match self {
+            BallColorMode::Random => "random".to_string(),
+            BallColorMode::Color => "color".to_string(),
+            BallColorMode::Infection => "infection".to_string(),
+            BallColorMode::Temperature => "temperature".to_string(),
+        }
+    }
 }
 
 pub struct BallScreenSaver {
@@ -168,7 +195,14 @@ impl ScreenSaver for BallScreenSaver {
         self.balls.push(balls);
     }
 
-    fn update(&mut self, size: Size, config: &Configurator, device: &wgpu::Device, queue: &wgpu::Queue, dt: Duration) {
+    fn update(
+        &mut self,
+        size: Size,
+        config: &Configurator,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dt: Duration,
+    ) {
         let ratio = size.to_logical::<f32>(1.0).width / size.to_logical::<f32>(1.0).height;
         //Note: this only is non-zero later if self.correct_ball_velocity is true
         let mut total_velocity = 0.0;
@@ -178,7 +212,8 @@ impl ScreenSaver for BallScreenSaver {
 
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
-            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>()
+            {
                 if *config != self.old_config {
                     println!("config changed");
                     let mut should_rebuild_instance_buffer = false;
@@ -241,9 +276,11 @@ impl ScreenSaver for BallScreenSaver {
                                 }
                                 instance.scale = config.ball_size;
                             }
-                        }
-                        else {
-                            particle_system.instances.instances.truncate(config.ball_count);
+                        } else {
+                            particle_system
+                                .instances
+                                .instances
+                                .truncate(config.ball_count);
                             particle_system.particle_data.truncate(config.ball_count);
                         }
 
@@ -256,7 +293,9 @@ impl ScreenSaver for BallScreenSaver {
                         }
                     }
 
-                    if config.color_mode != self.old_config.color_mode || config.color != self.old_config.color {
+                    if config.color_mode != self.old_config.color_mode
+                        || config.color != self.old_config.color
+                    {
                         self.color = util::color_from_hex(config.color.to_hex()).unwrap();
                         let infection_starting_color = util::random_color();
                         for i in 0..particle_system.instances.instances.len() {
@@ -272,8 +311,7 @@ impl ScreenSaver for BallScreenSaver {
                                     if i == 0 {
                                         self.color = util::random_color();
                                         instance.color = self.color;
-                                    }
-                                    else {
+                                    } else {
                                         instance.color = infection_starting_color
                                     }
                                 }
@@ -304,7 +342,6 @@ impl ScreenSaver for BallScreenSaver {
                     self.old_config = *config;
                 }
 
-
                 particle_system.instances.regions_x =
                     (1.0 * ratio / (0.16 * config.ball_size * config.region_size)).ceil() as usize;
                 particle_system.instances.regions_y =
@@ -328,14 +365,12 @@ impl ScreenSaver for BallScreenSaver {
                             let instance = particle_system.instances[i];
                             let mut velocity_if_correcting_it = 0.0;
 
-
                             if config.correct_ball_velocity {
                                 velocity_if_correcting_it =
                                     particle_system.particle_data[i].velocity.magnitude();
 
                                 if velocity_if_correcting_it.is_normal() {
-                                    let scalar = (config.ball_speed / self.actual_ball_speed
-                                        - 1.0)
+                                    let scalar = (config.ball_speed / self.actual_ball_speed - 1.0)
                                         * dt.as_secs_f32()
                                         / 10.0
                                         + 1.0;
@@ -344,7 +379,8 @@ impl ScreenSaver for BallScreenSaver {
                                         .mul_assign(scalar.clamp(0.5, 2.0));
 
                                     if particle_system.particle_data[i].velocity.magnitude2()
-                                        > (config.ball_speed * config.ball_speed * 1000.0).max(10.0) // we don't want false detections with low configured ball speeds
+                                        > (config.ball_speed * config.ball_speed * 1000.0).max(10.0)
+                                    // we don't want false detections with low configured ball speeds
                                     {
                                         log::error!("Particle velocity went haywire. Resetting it to a new random velocity. (velocity: {}, before correcting: {}, scalar: {})", particle_system.particle_data[i].velocity.magnitude(), velocity_if_correcting_it, scalar);
                                         let mut move_vector = Vector3::new(
@@ -387,25 +423,22 @@ impl ScreenSaver for BallScreenSaver {
                                         if (instance.position.x - other_instance.position.x)
                                             * (instance.position.x - other_instance.position.x)
                                             + (instance.position.y - other_instance.position.y)
-                                                * (instance.position.y
-                                                    - other_instance.position.y)
+                                                * (instance.position.y - other_instance.position.y)
                                             < instance.scale
                                                 * data.collider.unwrap().x
                                                 * instance.scale
                                                 * data.collider.unwrap().y
                                         {
-                                            let distance = instance
-                                                .position
-                                                .distance(other_instance.position);
-                                            let target_distance = config.ball_size
-                                                * data.collider.unwrap().x;
+                                            let distance =
+                                                instance.position.distance(other_instance.position);
+                                            let target_distance =
+                                                config.ball_size * data.collider.unwrap().x;
 
-                                            let n = (instance.position
-                                                - other_instance.position)
+                                            let n = (instance.position - other_instance.position)
                                                 .normalize();
-                                            particle_system.instances[i].position.add_assign(
-                                                n * (target_distance - distance) / 2.0,
-                                            );
+                                            particle_system.instances[i]
+                                                .position
+                                                .add_assign(n * (target_distance - distance) / 2.0);
                                             particle_system.instances[j].position.add_assign(
                                                 -n * (target_distance - distance) / 2.0,
                                             );
@@ -430,10 +463,16 @@ impl ScreenSaver for BallScreenSaver {
                                                     particle_system.instances[j].color = col;
                                                 }
                                                 BallColorMode::Infection => {
-                                                    if (util::compare_colors_ignoring_alpha(other_instance.color, self.color)
-                                                        || util::compare_colors_ignoring_alpha(instance.color, self.color))
-                                                        && ! util::compare_colors_ignoring_alpha(instance.color ,other_instance.color)
-                                                    {
+                                                    if (util::compare_colors_ignoring_alpha(
+                                                        other_instance.color,
+                                                        self.color,
+                                                    ) || util::compare_colors_ignoring_alpha(
+                                                        instance.color,
+                                                        self.color,
+                                                    )) && !util::compare_colors_ignoring_alpha(
+                                                        instance.color,
+                                                        other_instance.color,
+                                                    ) {
                                                         particle_system.instances[i].color =
                                                             self.color;
                                                         particle_system.instances[j].color =
@@ -450,7 +489,8 @@ impl ScreenSaver for BallScreenSaver {
                             match config.color_mode {
                                 BallColorMode::Temperature => {
                                     let hsv = Hsv::new(
-                                        angular_units::Turns((((if config.correct_ball_velocity {
+                                        angular_units::Turns(
+                                            (((if config.correct_ball_velocity {
                                                 velocity_if_correcting_it
                                             } else {
                                                 particle_system.particle_data[i]
@@ -460,7 +500,8 @@ impl ScreenSaver for BallScreenSaver {
                                                 - 0.5)
                                                 .max(0.0)
                                                 / 50.0)
-                                                .clamp(0.0, 0.9)),
+                                                .clamp(0.0, 0.9),
+                                        ),
                                         1.0,
                                         1.0,
                                     );
@@ -473,7 +514,10 @@ impl ScreenSaver for BallScreenSaver {
                                     }
                                 }
                                 BallColorMode::Infection => {
-                                    if util::compare_colors_ignoring_alpha(instance.color, self.color) {
+                                    if util::compare_colors_ignoring_alpha(
+                                        instance.color,
+                                        self.color,
+                                    ) {
                                         infected_balls += 1;
                                     }
                                 }
@@ -493,14 +537,18 @@ impl ScreenSaver for BallScreenSaver {
 
                 if infected_balls >= config.ball_count {
                     self.color = util::random_color();
-                    particle_system.instances.instances.choose_mut(&mut rand::thread_rng()).unwrap().color = self.color;
+                    particle_system
+                        .instances
+                        .instances
+                        .choose_mut(&mut rand::thread_rng())
+                        .unwrap()
+                        .color = self.color;
                 }
 
                 particle_system.update_instance_buffer(queue);
             };
             model.update(dt, queue);
         }
-
 
         self.actual_ball_speed = total_velocity / config.ball_count as f32;
         /*
@@ -514,7 +562,8 @@ impl ScreenSaver for BallScreenSaver {
     fn resize(&mut self, old_ratio: f32, new_ratio: f32) {
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
-            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+            if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>()
+            {
                 for instance in particle_system.instances.iter_mut() {
                     instance.position.x *= new_ratio / old_ratio;
                 }
@@ -564,7 +613,9 @@ impl ScreenSaver for BallScreenSaver {
         if let Some(old_input) = old_input {
             for model in &mut self.balls {
                 //get (ParticleSystem)(Object) idiot
-                if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                if let Some(particle_system) =
+                    model.mesh.as_any_mut().downcast_mut::<ParticleSystem>()
+                {
                     let x: f32 = position[0] / 2.0 + 0.5;
                     let y: f32 = position[1] / 2.0 + 0.5;
                     for i in particle_system.instances.get_regions_in_range(
@@ -578,8 +629,8 @@ impl ScreenSaver for BallScreenSaver {
                             0,
                             particle_system.instances.regions_y - 1,
                         ),
-                        (particle_system.instances.regions_y as f32 / 2.0 * BRUSH_SIZE)
-                            .ceil() as u32,
+                        (particle_system.instances.regions_y as f32 / 2.0 * BRUSH_SIZE).ceil()
+                            as u32,
                     ) {
                         //if particle_system.instances[i].position.distance2(Vector3::new(position[0], position[1], 0.0)) < BRUSH_SIZE * BRUSH_SIZE {
                         particle_system.particle_data[i]
@@ -620,7 +671,10 @@ impl ScreenSaver for SnowScreenSaver {
     where
         Self: Sized,
     {
-        Self { models: vec![], old_config: config}
+        Self {
+            models: vec![],
+            old_config: config,
+        }
     }
 
     fn setup(
@@ -746,15 +800,21 @@ impl ScreenSaver for SnowScreenSaver {
         if self.old_config != *config {
             for model in &mut self.models {
                 //get (ParticleSystem)(Object) idiot
-                if let Some(particle_system) = model.mesh.as_any_mut().downcast_mut::<ParticleSystem>() {
+                if let Some(particle_system) =
+                    model.mesh.as_any_mut().downcast_mut::<ParticleSystem>()
+                {
                     if config.snowflake_count != self.old_config.snowflake_count {
-                        let delta = config.snowflake_count as i32 - self.old_config.snowflake_count as i32;
+                        let delta =
+                            config.snowflake_count as i32 - self.old_config.snowflake_count as i32;
                         if delta > 0 {
                             particle_system.populate_random(delta.try_into().unwrap(), device);
-                            for i in self.old_config.snowflake_count..particle_system.instances.len() {
+                            for i in
+                                self.old_config.snowflake_count..particle_system.instances.len()
+                            {
                                 let particle = &mut particle_system.instances.instances[i];
                                 let data = &mut particle_system.particle_data[i];
-                                particle.position.z = 1.0 - particle.position.z * particle.position.z;
+                                particle.position.z =
+                                    1.0 - particle.position.z * particle.position.z;
                                 particle.scale = 1.0 - particle.position.z * 0.8;
                                 particle.color.a = 1.0 - particle.position.z as f64;
                                 data.velocity = Vector3::new(
@@ -763,14 +823,17 @@ impl ScreenSaver for SnowScreenSaver {
                                     0.0,
                                 )
                             }
-                        }
-                        else {
-                            particle_system.instances.instances.truncate(config.snowflake_count);
-                            particle_system.particle_data.truncate(config.snowflake_count);
+                        } else {
+                            particle_system
+                                .instances
+                                .instances
+                                .truncate(config.snowflake_count);
+                            particle_system
+                                .particle_data
+                                .truncate(config.snowflake_count);
                         }
 
                         model.mesh.rebuild_instance_buffer(device);
-
                     }
                 }
             }
@@ -805,8 +868,6 @@ impl ScreenSaver for SnowScreenSaver {
         render_pass.set_bind_group(1, &state.camera_bind_group, &[]);
 
         for model in &self.models {
-
-
             render_pass.set_bind_group(0, &model.material.bind_group, &[]);
             render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
         }

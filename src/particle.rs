@@ -214,8 +214,7 @@ impl Mesh for ParticleSystem {
                     }
                     if self.particle_system_data.domain.min_pos.z - instance.position.z > 0.0 {
                         data.velocity.z = data.velocity.z.abs();
-                    } else if self.particle_system_data.domain.max_pos.z - instance.position.z
-                        < 0.0
+                    } else if self.particle_system_data.domain.max_pos.z - instance.position.z < 0.0
                     {
                         data.velocity.z = -data.velocity.z.abs();
                     }
