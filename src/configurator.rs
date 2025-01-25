@@ -267,6 +267,7 @@ impl Configurator {
                 Some(a) => {match a.as_str() {
                     "apple" => DDDModel::Apple,
                     "shark" => DDDModel::Shark,
+                    "kim_kitsuragi" => DDDModel::KimKitsuragi,
                     _ => DDDModel::Apple
                 }}
             },
@@ -473,6 +474,7 @@ impl eframe::App for ConfigUI {
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(&mut configurator.ddd_model, DDDModel::Apple, "Apple");
                                         ui.selectable_value(&mut configurator.ddd_model, DDDModel::Shark, "Shark");
+                                        ui.selectable_value(&mut configurator.ddd_model, DDDModel::KimKitsuragi, "Kim Kitsuragi");
                                         //ui.selectable_value(&mut configurator.ddd_model, DDDModel::Custom, "Custom");
                                     });
                                 if self.old_model != configurator.ddd_model {

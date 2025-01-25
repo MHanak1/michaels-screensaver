@@ -42,7 +42,6 @@ fn vs_main(
     out.tex_coords = model.tex_coords;
     //out.clip_position[3] *= 0.01;
     out.clip_position = camera.view_proj * model_matrix * vec4<f32>(instance.position + model.position * instance.scale, 1.0); // 2.
-    //out.color = instance.color;
     return out;
 }
 
@@ -56,8 +55,6 @@ var s_diffuse: sampler;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var out = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-    //out *= in.color;
-    //out[0] = 1.0;
     if out[3] == 0 {
         discard;
     }
