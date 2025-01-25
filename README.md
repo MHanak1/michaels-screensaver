@@ -11,10 +11,11 @@
 ## About
 A screensaver app written in Rust, using [wgpu](https://wgpu.rs/) for rendering, and [egui](https://egui.rs) for the config GUI 
 
-Currently, it consists of 2 screensavers:
+Currently, it consists of 3 screensavers:
 
  * **Snow** - A couple of hills, with snow slowly falling.
  * **Balls** - Balls Bouncing off of each other and off the screen sides. Highly configurable, with different color modes and presets. Turns out, that this is also a pretty decent gas simulation (since the balls follow the same rules as gas particles)
+ * **3D Model** - A 3D model simply spinning and bobbing up and down. the apple and the shark models are made by me, and the third one is taken from the hit detective game Disco Elysium
 ## Usage
 ### Any Ol' Web Browser*
 * Go to https://mhanak.net/screensaver
@@ -38,7 +39,7 @@ Currently, it consists of 2 screensavers:
 * ¯\\\_(ツ)\_/¯
 * Try [this script](https://askubuntu.com/questions/707855/how-to-execute-a-command-after-a-certain-period-of-inactivity-triggered-by-keyb) (I may eventually build that into the screensaver)
 ### macOS
-* does not and probably never will not work as an actual screensaver. as far as I know MacOS handles screensavers differently, and even if I did figure out how to do that, I do not have a device I could test it on.
+* does not and probably never will not work as an actual screensaver. as far as I know macOS handles screensavers differently, and even if I did figure out how to do that, I do not have a device I could test it on.
 ## Building
 ### Native
 `cargo run --release` - the compiled binary *should* be somewhere in the `target/release` folder
@@ -55,7 +56,7 @@ the config file is located in `C:\Users\UserName\AppData\Roaming\michaels-screen
 ```toml
 # contents of default_config.toml
 
-#avaliable screensavers: snow, balls
+#avaliable screensavers: snow, balls, 3d_model
 screensaver = "balls"
 fullscreen = true
 
@@ -82,6 +83,15 @@ target_display_density = 10.0
 region_size = 1.0
 #whether the balls should slow down/speed up if the average speed is higher/lower than the configured speed.
 correct_ball_velocity = true
+
+[3d_model]
+#avaliable models: apple, shark, kim_kitsuragi
+model = "apple"
+model_scale = 1.0
+spin_speed = 1.0
+bounce_speed = 1.0
+bounce_height = 0.2
+
 ```
 ### URL Parameters (web)
 The parameters are converted into a TOML and then loaded as standard config, because of that every value visible above can be changed through the url (some of them, like `fullscreen` are ignored in the web version). the `screensaver` parameter should always be before all the screensaver options.

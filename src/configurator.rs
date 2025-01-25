@@ -52,7 +52,7 @@ pub struct Configurator {
 
     //Internal Use - Not Configurable
     pub(crate) preview_window: bool,
-    pub should_reload: bool
+    pub should_reload: bool,
 }
 
 impl Configurator {
@@ -257,19 +257,20 @@ impl Configurator {
                 .clone()
                 .try_deserialize()
                 .unwrap(),
-            ddd_model: match ddd_model.get("model")
+            ddd_model: match ddd_model
+                .get("model")
                 .unwrap()
                 .clone()
                 .try_deserialize::<Option<String>>()
                 .unwrap()
             {
-                None => {DDDModel::Apple}
-                Some(a) => {match a.as_str() {
+                None => DDDModel::Apple,
+                Some(a) => match a.as_str() {
                     "apple" => DDDModel::Apple,
                     "shark" => DDDModel::Shark,
                     "kim_kitsuragi" => DDDModel::KimKitsuragi,
-                    _ => DDDModel::Apple
-                }}
+                    _ => DDDModel::Apple,
+                },
             },
             model_scale: ddd_model
                 .get("model_scale")

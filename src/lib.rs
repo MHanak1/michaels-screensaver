@@ -7,7 +7,6 @@ mod shaders;
 mod texture;
 mod util;
 
-use winit::event::KeyEvent;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -15,6 +14,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 use wgpu::BindGroupLayout;
+use winit::event::KeyEvent;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::WindowBuilderExtWebSys;
 #[cfg(target_arch = "wasm32")]
@@ -36,9 +36,9 @@ use winit::error::EventLoopError;
 //#[cfg(debug_assertions)]
 //#[cfg(not(target_arch = "wasm32"))]
 //use winit::event::KeyEvent;
-use winit::event::{ElementState, Event, TouchPhase, WindowEvent};
 #[cfg(target_arch = "wasm32")]
-use winit::event::{MouseButton};
+use winit::event::MouseButton;
+use winit::event::{ElementState, Event, TouchPhase, WindowEvent};
 
 use crate::configurator::{ConfigUI, Configurator};
 use crate::model::ModelInstanceRaw;
@@ -480,7 +480,6 @@ impl<'a> State<'a> {
                         push_constant_ranges: &[],
                     });
 
-
                 screensaver.setup(
                     Size::from(size),
                     configurator,
@@ -540,7 +539,9 @@ impl<'a> State<'a> {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        if /* !self.camera_controller.process_events(event)*/ true {
+        if
+        /* !self.camera_controller.process_events(event)*/
+        true {
             match event {
                 WindowEvent::CursorMoved { position, .. } => self.screensaver.handle_input(
                     [

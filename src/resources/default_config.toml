@@ -27,6 +27,7 @@ region_size = 1.0
 correct_ball_velocity = true
 
 [3d_model]
+#avaliable models: apple, shark, kim_kitsuragi
 model = "apple"
 model_scale = 1.0
 spin_speed = 1.0

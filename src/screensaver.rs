@@ -1,17 +1,19 @@
 use crate::configurator::Configurator;
 use crate::instance::LayoutDescriptor;
-use crate::model::{DrawModel, Material, Mesh, Model, ModelInstance, ModelInstanceRaw, ModelMesh, Vertex};
+use crate::model::{
+    DrawModel, Material, Mesh, Model, ModelInstance, ModelInstanceRaw, ModelMesh, Vertex,
+};
 use crate::particle::{ParticleInstance, ParticleInstanceRaw, ParticleSystem, ParticleSystemData};
 use crate::util::pos::{BoundingBox, BoundingBoxType};
 use crate::util::render::create_render_pipeline;
 use crate::{model, shaders, texture, util, CameraType, State};
+use cgmath::num_traits::FloatConst;
 use cgmath::{InnerSpace, MetricSpace, Point3, Quaternion, Rotation3, Vector3};
 use prisma::{Hsv, Rgb};
 use rand::prelude::SliceRandom;
 use rand::random;
 use std::ops::{AddAssign, MulAssign};
 use std::path::PathBuf;
-use cgmath::num_traits::FloatConst;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
@@ -90,7 +92,11 @@ impl ScreenSaver for DDDModelScreensaver {
     where
         Self: Sized,
     {
-        Self { models: vec![], rotation: 0.0, bounce_phase: 0.0 }
+        Self {
+            models: vec![],
+            rotation: 0.0,
+            bounce_phase: 0.0,
+        }
     }
 
     fn setup(
@@ -123,12 +129,12 @@ impl ScreenSaver for DDDModelScreensaver {
                 &[model::ModelVertex::desc(), ModelInstanceRaw::desc()],
                 shader,
             ),
-        ).unwrap();
+        )
+        .unwrap();
 
         model.mesh.update_instance_buffer(queue);
 
         self.models.push(model);
-
     }
 
     fn update(
@@ -144,11 +150,14 @@ impl ScreenSaver for DDDModelScreensaver {
         for model in &mut self.models {
             model.update(dt, queue);
             //get (ParticleSystem)(Object) idiot
-            if let Some(model) = model.mesh.as_any_mut().downcast_mut::<ModelMesh>()
-            {
-                for instance in &mut model.instances{
-                    instance.position.y = f32::sin(self.bounce_phase * f32::PI()) * config.bounce_height;
-                    instance.rotation = Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(self.rotation * 90.0) );
+            if let Some(model) = model.mesh.as_any_mut().downcast_mut::<ModelMesh>() {
+                for instance in &mut model.instances {
+                    instance.position.y =
+                        f32::sin(self.bounce_phase * f32::PI()) * config.bounce_height;
+                    instance.rotation = Quaternion::from_axis_angle(
+                        cgmath::Vector3::unit_y(),
+                        cgmath::Deg(self.rotation * 90.0),
+                    );
                     instance.scale = config.model_scale;
                 }
             }
@@ -183,13 +192,12 @@ impl ScreenSaver for DDDModelScreensaver {
         }
     }
 
-    fn get_camera_type(&self) -> CameraType
-    {
+    fn get_camera_type(&self) -> CameraType {
         CameraType::Perspective(30.0)
     }
 
     fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>) {
-        (Point3::new(3.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0) )
+        (Point3::new(3.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0))
     }
 }
 
@@ -798,8 +806,7 @@ impl ScreenSaver for BallScreenSaver {
         }
     }
 
-    fn get_camera_type(&self) -> CameraType
-    {
+    fn get_camera_type(&self) -> CameraType {
         CameraType::Orthographic()
     }
 
@@ -836,7 +843,6 @@ impl ScreenSaver for SnowScreenSaver {
         pipeline_layout: &wgpu::PipelineLayout,
         color_format: wgpu::TextureFormat,
         depth_format: Option<wgpu::TextureFormat>,
-
     ) {
         let shader = wgpu::ShaderModuleDescriptor {
             label: Some("Ground1 Shader"),
@@ -1086,12 +1092,14 @@ impl ScreenSaver for SnowScreenSaver {
         }
     }
 
-    fn get_camera_type(&self) -> CameraType
-    {
+    fn get_camera_type(&self) -> CameraType {
         CameraType::Orthographic()
     }
 
     fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>) {
-        (Point3::new(0.0, 0.0, 0.0), Point3::new(self.touch_pos[0] / 4.0, self.touch_pos[1] / 4.0, 0.0))
+        (
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(self.touch_pos[0] / 4.0, self.touch_pos[1] / 4.0, 0.0),
+        )
     }
 }

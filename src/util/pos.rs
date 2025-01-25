@@ -256,15 +256,23 @@ impl<T: Num + From<f32> + AddAssign + SubAssign + FloatCore> BoundingBox<T> {
          */
         let mut new_pos = pos;
 
-        if pos.x < self.min_pos.x {new_pos.x += self.width().into()}
-        else if pos.x > self.max_pos.x {new_pos.x -= self.width().into()}
-        if pos.y < self.min_pos.y {new_pos.y += self.height().into()}
-        else if pos.y > self.max_pos.y {new_pos.y -= self.height().into()}
-        if pos.z < self.min_pos.z {new_pos.z += self.depth().into()}
-        else if pos.z > self.max_pos.z {new_pos.z -= self.depth().into()}
+        if pos.x < self.min_pos.x {
+            new_pos.x += self.width().into()
+        } else if pos.x > self.max_pos.x {
+            new_pos.x -= self.width().into()
+        }
+        if pos.y < self.min_pos.y {
+            new_pos.y += self.height().into()
+        } else if pos.y > self.max_pos.y {
+            new_pos.y -= self.height().into()
+        }
+        if pos.z < self.min_pos.z {
+            new_pos.z += self.depth().into()
+        } else if pos.z > self.max_pos.z {
+            new_pos.z -= self.depth().into()
+        }
 
         new_pos
-
     }
 }
 

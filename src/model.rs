@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::instance::{Instance, LayoutDescriptor, ToRaw};
+use crate::util::model::DDDModel;
 use crate::util::pos::{Position2, Position3};
 use crate::{model, texture};
 use cgmath::{Point2, Point3, Quaternion, Rotation3, Vector3};
@@ -14,7 +15,6 @@ use web_time::Duration;
 use wgpu::util::DeviceExt;
 use wgpu::{Color, Queue, RenderPipeline};
 use winit::dpi::Position;
-use crate::util::model::DDDModel;
 
 pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
@@ -86,20 +86,17 @@ impl Model {
         let obj_cursor = Cursor::new(obj_text);
         let mut obj_reader = BufReader::new(obj_cursor);
 
-        let (models, _)= tobj::load_obj_buf(&mut obj_reader, &tobj::LoadOptions {
-            triangulate: true,
-            single_index: true,
-            ..Default::default()
-        }, |_| {
-            tobj::load_mtl_buf(&mut BufReader::new(Cursor::new("")))
-        })?;
-
-        let diffuse_texture = texture::Texture::from_bytes(
-            device,
-            queue,
-            &*model.get().1,
-            "",
+        let (models, _) = tobj::load_obj_buf(
+            &mut obj_reader,
+            &tobj::LoadOptions {
+                triangulate: true,
+                single_index: true,
+                ..Default::default()
+            },
+            |_| tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(""))),
         )?;
+
+        let diffuse_texture = texture::Texture::from_bytes(device, queue, &*model.get().1, "")?;
 
         let material = Material::new(diffuse_texture, device, layout, pipeline);
 
@@ -118,12 +115,10 @@ impl Model {
                 })
                 .collect::<Vec<_>>();
 
-            let instances: Vec<ModelInstance> = vec![
-                ModelInstance {
-                    position,
-                    ..Default::default()
-                }
-            ];
+            let instances: Vec<ModelInstance> = vec![ModelInstance {
+                position,
+                ..Default::default()
+            }];
 
             let instance_data = instances
                 .iter()
@@ -427,7 +422,6 @@ impl LayoutDescriptor for ModelInstanceRaw {
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32x3,
                 },
-
                 //transform matrix
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,

@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 pub enum DDDModel {
     Apple,
     Shark,
-    KimKitsuragi
+    KimKitsuragi,
 }
 
 impl ToString for DDDModel {
@@ -16,7 +16,7 @@ impl ToString for DDDModel {
         match self {
             DDDModel::Apple => "apple".to_string(),
             DDDModel::Shark => "shark".to_string(),
-            DDDModel::KimKitsuragi => "kim_kitsuragi".to_string()
+            DDDModel::KimKitsuragi => "kim_kitsuragi".to_string(),
         }
     }
 }
@@ -25,17 +25,23 @@ impl DDDModel {
     pub(crate) fn get(&self) -> (String, Vec<u8>) {
         match self {
             DDDModel::Apple => (
-                include_str!("../resources/models/apple.obj").parse().unwrap(),
-                Vec::from(include_bytes!("../resources/textures/apple.png"))
+                include_str!("../resources/models/apple.obj")
+                    .parse()
+                    .unwrap(),
+                Vec::from(include_bytes!("../resources/textures/apple.png")),
             ),
             DDDModel::Shark => (
-                include_str!("../resources/models/shark.obj").parse().unwrap(),
-                Vec::from(include_bytes!("../resources/textures/shark.png"))
+                include_str!("../resources/models/shark.obj")
+                    .parse()
+                    .unwrap(),
+                Vec::from(include_bytes!("../resources/textures/shark.png")),
             ),
             DDDModel::KimKitsuragi => (
-                include_str!("../resources/models/kim_kitsuragi.obj").parse().unwrap(),
-                Vec::from(include_bytes!("../resources/textures/kim_kitsuragi.png"))
-            )
+                include_str!("../resources/models/kim_kitsuragi.obj")
+                    .parse()
+                    .unwrap(),
+                Vec::from(include_bytes!("../resources/textures/kim_kitsuragi.png")),
+            ),
         }
     }
 }
