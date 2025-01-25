@@ -1,4 +1,5 @@
 use crate::screensaver::{BallColorMode, ScreenSaverType};
+use crate::util::model::DDDModel;
 use crate::{run_with_config, screensaver};
 use config::Config;
 use std::fs::File;
@@ -8,10 +9,10 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-#[cfg(target_arch = "wasm32")]
-use web_sys::window;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+use web_sys::window;
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
@@ -42,8 +43,16 @@ pub struct Configurator {
     pub(crate) region_size: f32,
     pub(crate) correct_ball_velocity: bool,
 
+    //3D Model
+    pub ddd_model: DDDModel,
+    pub model_scale: f32,
+    pub spin_speed: f32,
+    pub bounce_speed: f32,
+    pub bounce_height: f32,
+
     //Internal Use - Not Configurable
     pub(crate) preview_window: bool,
+    pub should_reload: bool
 }
 
 impl Configurator {
@@ -72,6 +81,12 @@ impl Configurator {
         doc["balls"]["region_size"] = value(self.region_size as f64);
         doc["balls"]["correct_ball_velocity"] = value(self.correct_ball_velocity);
 
+        doc["3d_model"]["model"] = value(self.ddd_model.to_string());
+        doc["3d_model"]["model_scale"] = value(self.model_scale as f64);
+        doc["3d_model"]["spin_speed"] = value(self.spin_speed as f64);
+        doc["3d_model"]["bounce_speed"] = value(self.bounce_speed as f64);
+        doc["3d_model"]["bounce_height"] = value(self.bounce_height as f64);
+
         let mut toml = File::create(config_path).unwrap();
         toml.write_all(doc.to_string().as_bytes()).unwrap();
     }
@@ -88,6 +103,12 @@ impl Configurator {
             .to_string()
             .as_string()
             .unwrap();
+
+        if url.contains("?") {
+            url.truncate(url.find("?").unwrap());
+            log::error!("{}", url);
+        }
+
         url += format!("?screensaver={}", self.screensaver.to_string()).as_str();
 
         if dc.snowflake_count != self.snowflake_count {
@@ -107,19 +128,34 @@ impl Configurator {
             url += format!("&color_mode={}", self.color_mode.to_string()).as_str()
         }
         if dc.color != self.color {
-            url += format!("color={}", self.color.to_hex()[0..7].replace("#", "%23")).as_str()
+            url += format!("&color={}", self.color.to_hex()[0..7].replace("#", "%23")).as_str()
         }
         if dc.show_density != self.show_density {
-            url += format!("show_density={}", self.show_density).as_str()
+            url += format!("&show_density={}", self.show_density).as_str()
         }
         if dc.target_display_density != self.target_display_density {
-            url += format!("target_display_density={}", self.target_display_density).as_str()
+            url += format!("&target_display_density={}", self.target_display_density).as_str()
         }
         if dc.region_size != self.region_size {
-            url += format!("region_size={}", self.region_size).as_str()
+            url += format!("&region_size={}", self.region_size).as_str()
         }
         if dc.correct_ball_velocity != self.correct_ball_velocity {
-            url += format!("correct_ball_velocity={}", self.correct_ball_velocity).as_str()
+            url += format!("&correct_ball_velocity={}", self.correct_ball_velocity).as_str()
+        }
+        if dc.ddd_model != self.ddd_model {
+            url += format!("&model={}", self.ddd_model.to_string()).as_str()
+        }
+        if dc.model_scale != self.model_scale {
+            url += format!("&model_scale={}", self.model_scale.to_string()).as_str()
+        }
+        if dc.spin_speed != self.spin_speed {
+            url += format!("&spin_speed={}", self.spin_speed).as_str()
+        }
+        if dc.bounce_speed != self.bounce_speed {
+            url += format!("&bounce_speed={}", self.bounce_speed).as_str()
+        }
+        if dc.bounce_height != self.bounce_height {
+            url += format!("&bounce_height={}", self.bounce_height).as_str()
         }
 
         url
@@ -129,10 +165,12 @@ impl Configurator {
         let screensaver_name: String = config.get("screensaver").unwrap();
         let snow = config.get_table("snow").unwrap();
         let balls = config.get_table("balls").unwrap();
+        let ddd_model = config.get_table("3d_model").unwrap();
         Self {
             screensaver: match screensaver_name.as_str() {
-                "snow" => screensaver::ScreenSaverType::Snow,
-                "balls" => screensaver::ScreenSaverType::Balls,
+                "snow" => ScreenSaverType::Snow,
+                "balls" => ScreenSaverType::Balls,
+                "3d_model" => ScreenSaverType::DDDModel,
                 _ => {
                     log::error!(
                         "Unknown screensaver: \"{}\", defaulting to \"snow\"",
@@ -219,7 +257,45 @@ impl Configurator {
                 .clone()
                 .try_deserialize()
                 .unwrap(),
+            ddd_model: match ddd_model.get("model")
+                .unwrap()
+                .clone()
+                .try_deserialize::<Option<String>>()
+                .unwrap()
+            {
+                None => {DDDModel::Apple}
+                Some(a) => {match a.as_str() {
+                    "apple" => DDDModel::Apple,
+                    "shark" => DDDModel::Shark,
+                    _ => DDDModel::Apple
+                }}
+            },
+            model_scale: ddd_model
+                .get("model_scale")
+                .unwrap()
+                .clone()
+                .try_deserialize()
+                .unwrap(),
+            spin_speed: ddd_model
+                .get("spin_speed")
+                .unwrap()
+                .clone()
+                .try_deserialize()
+                .unwrap(),
+            bounce_speed: ddd_model
+                .get("bounce_speed")
+                .unwrap()
+                .clone()
+                .try_deserialize()
+                .unwrap(),
+            bounce_height: ddd_model
+                .get("bounce_height")
+                .unwrap()
+                .clone()
+                .try_deserialize()
+                .unwrap(),
             preview_window: false,
+            should_reload: false,
         }
     }
 
@@ -283,14 +359,18 @@ impl Default for Configurator {
 pub struct ConfigUI {
     pub configurator: Arc<Mutex<Configurator>>,
     color_picker_color: [f32; 3],
-    pub clicked_gen_url: Instant,
+    clicked_gen_url: Instant,
+    old_model: DDDModel,
 }
 impl ConfigUI {
     pub fn new(configurator: Arc<Mutex<Configurator>>) -> Self {
         Self {
             configurator,
             color_picker_color: [f32::NAN, f32::NAN, f32::NAN],
-            clicked_gen_url: Instant::now().checked_sub(Duration::from_secs(10)).unwrap_or(Instant::now()), //for some reason subtracting from an instant doesn't work on WASM
+            clicked_gen_url: Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or(Instant::now()), //for some reason subtracting from an instant doesn't work on WASM
+            old_model: DDDModel::Apple,
         }
     }
 }
@@ -317,6 +397,7 @@ impl eframe::App for ConfigUI {
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut configurator.screensaver, ScreenSaverType::Snow, "Snow");
                             ui.selectable_value(&mut configurator.screensaver, ScreenSaverType::Balls, "Balls");
+                            ui.selectable_value(&mut configurator.screensaver, ScreenSaverType::DDDModel, "3D Model");
                         });
                     ui.end_row();
                     ui.separator();
@@ -386,6 +467,24 @@ impl eframe::App for ConfigUI {
                                 });
                                 ui.end_row();
                             }
+                            ScreenSaverType::DDDModel => {
+                                egui::ComboBox::from_label("Model")
+                                    .selected_text(format!("{:?}", configurator.ddd_model))
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut configurator.ddd_model, DDDModel::Apple, "Apple");
+                                        ui.selectable_value(&mut configurator.ddd_model, DDDModel::Shark, "Shark");
+                                        //ui.selectable_value(&mut configurator.ddd_model, DDDModel::Custom, "Custom");
+                                    });
+                                if self.old_model != configurator.ddd_model {
+                                    configurator.should_reload = true;
+                                }
+                                ui.add(egui::Slider::new(&mut configurator.model_scale, 0.1..=3.0).text("Model Size"));
+                                ui.add(egui::Slider::new(&mut configurator.spin_speed, 0.0..=5.0).text("Spin Speed"));
+                                ui.add(egui::Slider::new(&mut configurator.bounce_speed, 0.0..=5.0).text("Bounce Speed"));
+                                ui.add(egui::Slider::new(&mut configurator.bounce_height, 0.0..=1.0).text("Bounce Height"));
+
+                                self.old_model = configurator.ddd_model;
+                            }
                         }
                         ui.separator();
                         ui.horizontal(|ui| {
@@ -412,13 +511,16 @@ impl eframe::App for ConfigUI {
                                     pollster::block_on(run_with_config(config));
                                 });
                             }
-                            let url_btn = ui.add(egui::Button::new("Generate URL"));
-                            if url_btn.clicked() {
-                                self.clicked_gen_url = Instant::now();
-                                ctx.copy_text(configurator.generate_url());
-                            }
-                            if Instant::now().duration_since(self.clicked_gen_url) < Duration::from_secs(1) {
-                                url_btn.show_tooltip_text("Copied Link");
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let url_btn = ui.add(egui::Button::new("Generate URL"));
+                                if url_btn.clicked() {
+                                    self.clicked_gen_url = Instant::now();
+                                    ctx.copy_text(configurator.generate_url());
+                                }
+                                if Instant::now().duration_since(self.clicked_gen_url) < Duration::from_secs(1) {
+                                    url_btn.show_tooltip_text("Copied Link");
+                                }
                             }
                         });
                         ui.end_row();

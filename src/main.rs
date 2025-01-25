@@ -34,7 +34,6 @@ fn main() {
     }
     env_logger::init();
 
-
     let config_app = ConfigUI::new(Arc::new(Mutex::new(
         Configurator::from_config(get_config()),
     )));

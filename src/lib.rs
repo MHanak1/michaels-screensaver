@@ -7,6 +7,7 @@ mod shaders;
 mod texture;
 mod util;
 
+use winit::event::KeyEvent;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -19,7 +20,7 @@ use winit::platform::web::WindowBuilderExtWebSys;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::WindowExtWebSys;
 
-use crate::instance::InstanceRaw;
+use crate::instance::LayoutDescriptor;
 use crate::screensaver::{ScreenSaver, ScreenSaverType};
 use cgmath::prelude::*;
 use cgmath::Matrix4;
@@ -32,14 +33,17 @@ use wgpu::util::DeviceExt;
 use wgpu::Limits;
 use winit::dpi::Size;
 use winit::error::EventLoopError;
-#[cfg(debug_assertions)]
-#[cfg(not(target_arch = "wasm32"))]
-use winit::event::KeyEvent;
+//#[cfg(debug_assertions)]
+//#[cfg(not(target_arch = "wasm32"))]
+//use winit::event::KeyEvent;
 use winit::event::{ElementState, Event, TouchPhase, WindowEvent};
 #[cfg(target_arch = "wasm32")]
-use winit::event::{KeyEvent, MouseButton};
+use winit::event::{MouseButton};
 
 use crate::configurator::{ConfigUI, Configurator};
+use crate::model::ModelInstanceRaw;
+use particle::ParticleInstanceRaw;
+use util::render;
 use winit::event_loop::{EventLoop, EventLoopBuilder};
 use winit::keyboard::{Key, NamedKey};
 #[cfg(target_os = "windows")]
@@ -153,8 +157,8 @@ impl CameraUniform {
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    -1.0, 0.0, 0.0, 0.0,
-    0.0, -1.0, 0.0, 0.0,
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 0.5, 0.5,
     0.0, 0.0, 0.0, 1.0,
 );
@@ -188,7 +192,7 @@ impl CameraController {
 
     fn process_events(&mut self, event: &WindowEvent) -> bool {
         match event {
-            #[cfg(debug_assertions)]
+            //#[cfg(debug_assertions)]
             WindowEvent::KeyboardInput {
                 event: KeyEvent {
                     state, logical_key, ..
@@ -214,17 +218,17 @@ impl CameraController {
             if let Key::Character(char) = key {
                 match camera.camera_type {
                     CameraType::Orthographic() => match char.to_ascii_lowercase().as_str() {
-                        "w" => camera.eye.y += move_delta,
-                        "s" => camera.eye.y -= move_delta,
-                        "d" => camera.eye.x += move_delta,
-                        "a" => camera.eye.x -= move_delta,
+                        "w" => camera.eye.y -= move_delta,
+                        "s" => camera.eye.y += move_delta,
+                        "d" => camera.eye.x -= move_delta,
+                        "a" => camera.eye.x += move_delta,
                         _ => {}
                     },
                     CameraType::Perspective(_) => match char.to_ascii_lowercase().as_str() {
-                        "s" => camera.eye.z -= move_delta,
-                        "w" => camera.eye.z += move_delta,
-                        "e" => camera.eye.y -= move_delta,
-                        "q" => camera.eye.y += move_delta,
+                        "s" => camera.eye.z += move_delta,
+                        "w" => camera.eye.z -= move_delta,
+                        "e" => camera.eye.y += move_delta,
+                        "q" => camera.eye.y -= move_delta,
                         "a" => camera.eye.x -= move_delta,
                         "d" => camera.eye.x += move_delta,
                         _ => {}
@@ -250,8 +254,8 @@ impl Camera {
 
                     //custom orthographic projection matrix
                     Matrix4::new(
-                        1.0 / self.ratio, 0.0, 0.0, 0.0, //x
-                        0.0, 1.0, 0.0, 0.0, //y
+                        -1.0 / self.ratio, 0.0, 0.0, 0.0, //x
+                        0.0, -1.0, 0.0, 0.0, //y
                         self.eye.x - self.target.x, self.eye.y - self.target.y, 0.1, 0.0, //z
                         0.0, 0.0, 0.0, 1.0, //w
                     ), /*
@@ -275,7 +279,6 @@ struct State<'a> {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    render_pipeline: wgpu::RenderPipeline,
     window: &'a Window,
     background_color: wgpu::Color,
     camera: Camera,
@@ -288,6 +291,7 @@ struct State<'a> {
     screensaver_type: ScreenSaverType,
     last_updated: Instant,
     texture_bind_group_layout: BindGroupLayout,
+    render_pipeline_layout: wgpu::PipelineLayout,
 }
 
 impl<'a> State<'a> {
@@ -394,33 +398,31 @@ impl<'a> State<'a> {
                         ],
                         label: Some("texture_bind_group_layout"),
                     });
-                #[cfg(not(debug_assertions))]
-                let camera = Camera {
-                    // position the camera 1 unit up and 2 units back
-                    // +z is out of the screen
-                    eye: (0.0, 0.0, 0.0).into(),
-                    // have it look at the origin
-                    target: (0.0, 0.0, 0.0).into(),
-                    // which way is "up"
-                    up: cgmath::Vector3::unit_y(),
-                    znear: 0.1,
-                    zfar: 100.0,
-                    ratio: config.width as f32 / config.height as f32,
-                    camera_type: CameraType::Orthographic(),
+
+                let screensaver_type = &configurator.screensaver;
+
+                let mut screensaver: Box<dyn ScreenSaver> = match screensaver_type {
+                    ScreenSaverType::Snow => {
+                        Box::new(screensaver::SnowScreenSaver::new(*configurator))
+                    }
+                    ScreenSaverType::Balls => {
+                        Box::new(screensaver::BallScreenSaver::new(*configurator))
+                    }
+                    ScreenSaverType::DDDModel => {
+                        Box::new(screensaver::DDDModelScreensaver::new(*configurator))
+                    }
                 };
-                #[cfg(debug_assertions)]
+
+                let campos = screensaver.get_camera_position();
+
                 let camera = Camera {
-                    // position the camera 1 unit up and 2 units back
-                    // +z is out of the screen
-                    eye: (0.0, 0.0, 0.0).into(),
-                    // have it look at the origin
-                    target: (0.0, 0.0, 0.0).into(),
-                    // which way is "up"
+                    eye: campos.0,
+                    target: campos.1,
                     up: cgmath::Vector3::unit_y(),
                     znear: 0.1,
                     zfar: 100.0,
                     ratio: config.width as f32 / config.height as f32,
-                    camera_type: CameraType::Perspective(45.0),
+                    camera_type: screensaver.get_camera_type(),
                 };
 
                 let camera_controller = CameraController::new();
@@ -465,11 +467,6 @@ impl<'a> State<'a> {
                     label: Some("camera_bind_group"),
                 });
 
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("TutorialShader"),
-                    source: shaders::get(shaders::ShaderType::TutorialShader),
-                });
-
                 let depth_texture =
                     texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
@@ -483,65 +480,6 @@ impl<'a> State<'a> {
                         push_constant_ranges: &[],
                     });
 
-                let render_pipeline =
-                    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some("Render Pipeline"),
-                        layout: Some(&render_pipeline_layout),
-                        vertex: wgpu::VertexState {
-                            module: &shader,
-                            entry_point: Option::from("vs_main"),
-                            buffers: &[model::ModelVertex::desc(), InstanceRaw::desc()],
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &shader,
-                            entry_point: Option::from("fs_main"),
-                            targets: &[Some(wgpu::ColorTargetState {
-                                format: config.format,
-                                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                                write_mask: wgpu::ColorWrites::ALL,
-                            })],
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        }),
-                        primitive: wgpu::PrimitiveState {
-                            topology: wgpu::PrimitiveTopology::TriangleList,
-                            strip_index_format: None,
-                            front_face: wgpu::FrontFace::Ccw,
-                            //cull_mode: Some(wgpu::Face::Back),
-                            cull_mode: None,
-                            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                            polygon_mode: wgpu::PolygonMode::Fill,
-                            // Requires Features::DEPTH_CLIP_CONTROL
-                            unclipped_depth: false,
-                            // Requires Features::CONSERVATIVE_RASTERIZATION
-                            conservative: false,
-                        },
-                        depth_stencil: Some(wgpu::DepthStencilState {
-                            format: texture::Texture::DEPTH_FORMAT,
-                            depth_write_enabled: true,
-                            depth_compare: wgpu::CompareFunction::Less,
-                            stencil: wgpu::StencilState::default(),
-                            bias: wgpu::DepthBiasState::default(),
-                        }),
-                        multisample: wgpu::MultisampleState {
-                            count: 1,
-                            mask: !0,
-                            alpha_to_coverage_enabled: false,
-                        },
-                        multiview: None,
-                        cache: None,
-                    });
-
-                let screensaver_type = &configurator.screensaver;
-
-                let mut screensaver: Box<dyn ScreenSaver> = match screensaver_type {
-                    ScreenSaverType::Snow => {
-                        Box::new(screensaver::SnowScreenSaver::new(*configurator))
-                    }
-                    ScreenSaverType::Balls => {
-                        Box::new(screensaver::BallScreenSaver::new(*configurator))
-                    }
-                };
 
                 screensaver.setup(
                     Size::from(size),
@@ -549,6 +487,9 @@ impl<'a> State<'a> {
                     &device,
                     &queue,
                     &texture_bind_group_layout,
+                    &render_pipeline_layout,
+                    config.format,
+                    Some(texture::Texture::DEPTH_FORMAT),
                 );
 
                 Self {
@@ -559,7 +500,6 @@ impl<'a> State<'a> {
                     config,
                     size,
                     background_color,
-                    render_pipeline,
                     depth_texture,
                     camera,
                     camera_controller,
@@ -567,6 +507,7 @@ impl<'a> State<'a> {
                     camera_buffer,
                     camera_bind_group,
                     texture_bind_group_layout,
+                    render_pipeline_layout,
                     screensaver,
                     screensaver_type: *screensaver_type,
                     last_updated: Instant::now(),
@@ -599,13 +540,7 @@ impl<'a> State<'a> {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        if !self.camera_controller.process_events(event) {
-            if self.screensaver_type == ScreenSaverType::Snow {
-                if let WindowEvent::CursorMoved { position, .. } = event {
-                    self.camera.target.x = -(position.x as f32 / self.size.width as f32) + 0.5;
-                    self.camera.target.y = (position.y as f32 / self.size.height as f32) - 0.5;
-                }
-            };
+        if /* !self.camera_controller.process_events(event)*/ true {
             match event {
                 WindowEvent::CursorMoved { position, .. } => self.screensaver.handle_input(
                     [
@@ -633,8 +568,12 @@ impl<'a> State<'a> {
         }
     }
 
-    fn update(&mut self, config: &Configurator) {
+    fn update(&mut self, config: &mut Configurator) {
         self.camera_controller.update_camera(&mut self.camera);
+        let cam_pos = self.screensaver.get_camera_position();
+        self.camera.eye = cam_pos.0;
+        self.camera.target = cam_pos.1;
+
         self.camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(
             &self.camera_buffer,
@@ -642,19 +581,29 @@ impl<'a> State<'a> {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
         let last_updated = Instant::now();
-        if self.screensaver_type != config.screensaver {
+        if self.screensaver_type != config.screensaver || config.should_reload {
+            config.should_reload = false;
             self.screensaver = match config.screensaver {
                 ScreenSaverType::Snow => Box::new(screensaver::SnowScreenSaver::new(*config)),
                 ScreenSaverType::Balls => Box::new(screensaver::BallScreenSaver::new(*config)),
+                ScreenSaverType::DDDModel => {
+                    Box::new(screensaver::DDDModelScreensaver::new(*config))
+                }
             };
             self.screensaver_type = config.screensaver;
+
             self.screensaver.setup(
                 Size::from(self.size),
                 config,
                 &self.device,
                 &self.queue,
                 &self.texture_bind_group_layout,
-            )
+                &self.render_pipeline_layout,
+                self.config.format,
+                Some(texture::Texture::DEPTH_FORMAT),
+            );
+
+            self.camera.camera_type = self.screensaver.get_camera_type();
         }
         self.screensaver.update(
             Size::from(self.size),
@@ -836,7 +785,7 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                 };
 
                 let result = event_loop.run(|event, control_flow| {
-                    if let Ok(configurator) = configurator.lock() {
+                    if let Ok(mut configurator) = configurator.lock() {
                         if let Event::WindowEvent {
                             ref event,
                             window_id,
@@ -935,7 +884,7 @@ pub async fn run_with_config(configurator: Arc<Mutex<Configurator>>) {
                                             return;
                                         }*/
 
-                                        state.update(&configurator);
+                                        state.update(&mut configurator);
                                         match state.render() {
                                             Ok(_) => {}
                                             // Reconfigure the surface if it's lost or outdated

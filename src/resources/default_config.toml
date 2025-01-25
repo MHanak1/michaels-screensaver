@@ -1,4 +1,4 @@
-#avaliable screensavers: snow, balls
+#avaliable screensavers: snow, balls, 3d_model
 screensaver = "balls"
 fullscreen = true
 
@@ -25,3 +25,10 @@ target_display_density = 10.0
 region_size = 1.0
 #whether the balls should slow down/speed up if the average speed is higher/lower than the configured speed.
 correct_ball_velocity = true
+
+[3d_model]
+model = "apple"
+model_scale = 1.0
+spin_speed = 1.0
+bounce_speed = 1.0
+bounce_height = 0.2

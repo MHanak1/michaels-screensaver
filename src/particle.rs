@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use crate::instance::Instance;
+use crate::instance::{LayoutDescriptor, ToRaw};
 use crate::model::{DrawMesh, Mesh, ModelVertex};
-use crate::util::{BoundingBox, BoundingBoxType, InstanceContainer};
+use crate::util::pos::{BoundingBox, BoundingBoxType, InstanceContainer, Position2, Position3};
 use cgmath::{Vector2, Vector3, Zero};
 use std::ops::{Add, Mul, Range};
 use std::time::Duration;
@@ -28,7 +28,7 @@ pub struct ParticleSystem {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub instances: InstanceContainer<Instance>,
+    pub instances: InstanceContainer<ParticleInstance>,
     pub particle_data: Vec<ParticleData>,
     pub particle_system_data: ParticleSystemData,
     pub num_elements: u32,
@@ -71,7 +71,7 @@ impl ParticleSystem {
 
         let instance_data = instances
             .iter()
-            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
+            .map(|particle_instance: &ParticleInstance| ParticleInstance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -112,7 +112,7 @@ impl ParticleSystem {
                 a: 1.0,
             };
 
-            self.instances.push(Instance {
+            self.instances.push(ParticleInstance {
                 position,
                 color: new_color,
                 //velocity: Vector3::new(0.0, 0.0, 0.0),
@@ -133,7 +133,7 @@ impl Mesh for ParticleSystem {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
+            .map(|particle_instance: &ParticleInstance| ParticleInstance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -146,7 +146,7 @@ impl Mesh for ParticleSystem {
         let instance_data = self
             .instances
             .iter()
-            .map(|particle_instance: &Instance| Instance::to_raw(particle_instance))
+            .map(|particle_instance: &ParticleInstance| ParticleInstance::to_raw(particle_instance))
             .collect::<Vec<_>>();
 
         queue.write_buffer(
@@ -158,10 +158,6 @@ impl Mesh for ParticleSystem {
 
     fn instance_count(&self) -> usize {
         self.instances.len()
-    }
-
-    fn instances(&mut self) -> &mut Vec<Instance> {
-        &mut self.instances.instances
     }
 
     fn update(&mut self, delta_t: Duration, queue: &Queue) {
@@ -243,5 +239,92 @@ impl DrawMesh for ParticleSystem {
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         pass.draw_indexed(0..self.num_elements, 0, instances);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ParticleInstance {
+    pub(crate) position: cgmath::Vector3<f32>,
+    //rotation: cgmath::Quaternion<f32>,
+    pub(crate) color: wgpu::Color,
+    pub(crate) scale: f32,
+    pub(crate) age: Duration,
+}
+
+impl ToRaw for ParticleInstance {
+    fn to_raw(&self) -> ParticleInstanceRaw {
+        ParticleInstanceRaw {
+            position: self.position.into(),
+            //model: Matrix4::from_translation(Vector3::zero()).into(),
+            color: [
+                self.color.r as f32,
+                self.color.g as f32,
+                self.color.b as f32,
+                self.color.a as f32,
+            ],
+            //velocity: self.velocity.into(),
+            scale: self.scale,
+        }
+    }
+}
+
+impl ParticleInstance {
+    pub fn update(&mut self, delta_time: Duration) {
+        self.age = self.age.add(delta_time);
+    }
+}
+
+impl Position2 for ParticleInstance {
+    fn x(&self) -> f32 {
+        self.position.x
+    }
+
+    fn y(&self) -> f32 {
+        self.position.y
+    }
+}
+
+impl Position3 for ParticleInstance {
+    fn z(&self) -> f32 {
+        self.position.z
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ParticleInstanceRaw {
+    pub(crate) color: [f32; 4],
+    //velocity: [f32; 3],
+    pub(crate) scale: f32,
+    pub(crate) position: [f32; 3],
+}
+
+impl LayoutDescriptor for ParticleInstanceRaw {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<ParticleInstanceRaw>() as wgpu::BufferAddress,
+            // We need to switch from using a step mode of Vertex to Instance
+            // This means that our shaders will only change to use the next
+            // instance when the shader starts processing a new instance
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0 as wgpu::BufferAddress,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                    shader_location: 4,
+                    format: wgpu::VertexFormat::Float32,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
+                    shader_location: 5,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ],
+        }
     }
 }

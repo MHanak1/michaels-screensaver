@@ -1,18 +1,25 @@
 use crate::configurator::Configurator;
-use crate::model::{DrawModel, Material, Mesh, Model};
-use crate::particle::{ParticleSystem, ParticleSystemData};
-use crate::util::{BoundingBox, BoundingBoxType};
-use crate::{texture, util, State};
-use cgmath::{InnerSpace, MetricSpace, Vector3};
+use crate::instance::LayoutDescriptor;
+use crate::model::{DrawModel, Material, Mesh, Model, ModelInstance, ModelInstanceRaw, ModelMesh, Vertex};
+use crate::particle::{ParticleInstance, ParticleInstanceRaw, ParticleSystem, ParticleSystemData};
+use crate::util::pos::{BoundingBox, BoundingBoxType};
+use crate::util::render::create_render_pipeline;
+use crate::{model, shaders, texture, util, CameraType, State};
+use cgmath::{InnerSpace, MetricSpace, Point3, Quaternion, Rotation3, Vector3};
 use prisma::{Hsv, Rgb};
 use rand::prelude::SliceRandom;
 use rand::random;
 use std::ops::{AddAssign, MulAssign};
+use std::path::PathBuf;
+use cgmath::num_traits::FloatConst;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
-use wgpu::Color;
+use wgpu::{
+    BindGroupLayout, Color, Device, PipelineLayout, Queue, RenderPass, RenderPipelineDescriptor,
+    TextureFormat,
+};
 use winit::dpi::Size;
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -20,6 +27,7 @@ use winit::dpi::Size;
 pub(crate) enum ScreenSaverType {
     Snow,
     Balls,
+    DDDModel, //can't do 3DModel
 }
 
 impl ToString for ScreenSaverType {
@@ -27,6 +35,7 @@ impl ToString for ScreenSaverType {
         match self {
             ScreenSaverType::Snow => "snow".to_string(),
             ScreenSaverType::Balls => "balls".to_string(),
+            ScreenSaverType::DDDModel => "3d_model".to_string(),
         }
     }
 }
@@ -50,6 +59,9 @@ pub trait ScreenSaver {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
+        pipeline_layout: &wgpu::PipelineLayout,
+        color_format: wgpu::TextureFormat,
+        depth_format: Option<wgpu::TextureFormat>,
     );
     fn update(
         &mut self,
@@ -63,6 +75,122 @@ pub trait ScreenSaver {
     fn get_background_color(&self) -> wgpu::Color;
     fn handle_input(&mut self, position: [f32; 2], id: u64, active: bool) -> bool;
     fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, state: &State<'_>);
+    fn get_camera_type(&self) -> CameraType;
+    fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>);
+}
+
+pub struct DDDModelScreensaver {
+    models: Vec<Model>,
+    rotation: f32,
+    bounce_phase: f32,
+}
+
+impl ScreenSaver for DDDModelScreensaver {
+    fn new(config: Configurator) -> Self
+    where
+        Self: Sized,
+    {
+        Self { models: vec![], rotation: 0.0, bounce_phase: 0.0 }
+    }
+
+    fn setup(
+        &mut self,
+        size: Size,
+        config: &Configurator,
+        device: &Device,
+        queue: &Queue,
+        layout: &BindGroupLayout,
+        pipeline_layout: &PipelineLayout,
+        color_format: TextureFormat,
+        depth_format: Option<TextureFormat>,
+    ) {
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some("Mesh Shader"),
+            source: shaders::get(shaders::ShaderType::MeshShader),
+        };
+
+        let mut model = Model::load(
+            config.ddd_model,
+            Vector3::new(0.0, 0.0, 0.0),
+            device,
+            queue,
+            layout,
+            create_render_pipeline(
+                device,
+                pipeline_layout,
+                color_format,
+                depth_format,
+                &[model::ModelVertex::desc(), ModelInstanceRaw::desc()],
+                shader,
+            ),
+        ).unwrap();
+
+        model.mesh.update_instance_buffer(queue);
+
+        self.models.push(model);
+
+    }
+
+    fn update(
+        &mut self,
+        size: Size,
+        config: &Configurator,
+        device: &Device,
+        queue: &Queue,
+        dt: Duration,
+    ) {
+        self.bounce_phase += dt.as_secs_f32() * config.bounce_speed;
+        self.rotation += dt.as_secs_f32() * config.spin_speed;
+        for model in &mut self.models {
+            model.update(dt, queue);
+            //get (ParticleSystem)(Object) idiot
+            if let Some(model) = model.mesh.as_any_mut().downcast_mut::<ModelMesh>()
+            {
+                for instance in &mut model.instances{
+                    instance.position.y = f32::sin(self.bounce_phase * f32::PI()) * config.bounce_height;
+                    instance.rotation = Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(self.rotation * 90.0) );
+                    instance.scale = config.model_scale;
+                }
+            }
+            model.mesh.update_instance_buffer(queue);
+        }
+    }
+
+    fn resize(&mut self, old_ratio: f32, new_ratio: f32) {}
+
+    fn get_background_color(&self) -> Color {
+        Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+    }
+
+    fn handle_input(&mut self, position: [f32; 2], id: u64, active: bool) -> bool {
+        false
+    }
+
+    fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, state: &State<'_>) {
+        // lib.rmesh.in
+        //render_pass.set_pipeline(&state.render_pipeline);
+        render_pass.set_bind_group(1, &state.camera_bind_group, &[]);
+
+        for model in &self.models {
+            render_pass.set_pipeline(&model.material.pipeline);
+            render_pass.set_bind_group(0, &model.material.bind_group, &[]);
+            render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
+        }
+    }
+
+    fn get_camera_type(&self) -> CameraType
+    {
+        CameraType::Perspective(30.0)
+    }
+
+    fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>) {
+        (Point3::new(3.0, 2.0, 3.0), Point3::new(0.0, 0.0, 0.0) )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -102,7 +230,7 @@ impl ScreenSaver for BallScreenSaver {
             balls: vec![],
             inputs: [None; 6],
             first_input_handled: false,
-            color: util::color_from_hex(config.color.to_hex()).unwrap(),
+            color: util::color::color_from_hex(config.color.to_hex()).unwrap(),
             actual_ball_speed: config.ball_speed,
             old_config: config,
         }
@@ -114,6 +242,9 @@ impl ScreenSaver for BallScreenSaver {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
+        pipeline_layout: &wgpu::PipelineLayout,
+        color_format: wgpu::TextureFormat,
+        depth_format: Option<wgpu::TextureFormat>,
     ) {
         let ratio = if size.to_logical::<f32>(1.0).width > 1.0 {
             size.to_logical::<f32>(1.0).width / size.to_logical::<f32>(1.0).height
@@ -140,11 +271,28 @@ impl ScreenSaver for BallScreenSaver {
             device,
         );
 
-        let material = Material::new(diffuse_texture, device, layout);
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some("Ball Shader"),
+            source: shaders::get(shaders::ShaderType::ParticleShader),
+        };
+
+        let material = Material::new(
+            diffuse_texture,
+            device,
+            layout,
+            util::render::create_render_pipeline(
+                device,
+                pipeline_layout,
+                color_format,
+                depth_format,
+                &[model::ModelVertex::desc(), ParticleInstanceRaw::desc()],
+                shader,
+            ),
+        );
 
         particle_system.populate_random(config.ball_count, device);
 
-        let infection_starting_color = util::random_color();
+        let infection_starting_color = util::color::random_color();
 
         for i in 0..particle_system.instances.len() {
             let instance = &mut particle_system.instances[i];
@@ -162,14 +310,14 @@ impl ScreenSaver for BallScreenSaver {
 
             match config.color_mode {
                 BallColorMode::Random => {
-                    instance.color = util::random_color();
+                    instance.color = util::color::random_color();
                 }
                 BallColorMode::Color => {
                     instance.color = self.color;
                 }
                 BallColorMode::Infection => {
                     if i == 0 {
-                        self.color = util::random_distinct_color(infection_starting_color);
+                        self.color = util::color::random_distinct_color(infection_starting_color);
                         instance.color = self.color;
                     } else {
                         instance.color = infection_starting_color;
@@ -208,7 +356,7 @@ impl ScreenSaver for BallScreenSaver {
         let mut total_velocity = 0.0;
 
         let mut infected_balls = 0;
-        let infection_starting_color = util::random_color();
+        let infection_starting_color = util::color::random_color();
 
         for model in &mut self.balls {
             //get (ParticleSystem)(Object) idiot
@@ -253,7 +401,8 @@ impl ScreenSaver for BallScreenSaver {
 
                                 match config.color_mode {
                                     BallColorMode::Random => {
-                                        instance.color = util::random_distinct_color(self.color);
+                                        instance.color =
+                                            util::color::random_distinct_color(self.color);
                                     }
                                     BallColorMode::Color => {
                                         instance.color = self.color;
@@ -296,20 +445,20 @@ impl ScreenSaver for BallScreenSaver {
                     if config.color_mode != self.old_config.color_mode
                         || config.color != self.old_config.color
                     {
-                        self.color = util::color_from_hex(config.color.to_hex()).unwrap();
-                        let infection_starting_color = util::random_color();
+                        self.color = util::color::color_from_hex(config.color.to_hex()).unwrap();
+                        let infection_starting_color = util::color::random_color();
                         for i in 0..particle_system.instances.instances.len() {
                             let instance = &mut particle_system.instances[i];
                             match config.color_mode {
                                 BallColorMode::Random => {
-                                    instance.color = util::random_distinct_color(self.color);
+                                    instance.color = util::color::random_distinct_color(self.color);
                                 }
                                 BallColorMode::Color => {
                                     instance.color = self.color;
                                 }
                                 BallColorMode::Infection => {
                                     if i == 0 {
-                                        self.color = util::random_color();
+                                        self.color = util::color::random_color();
                                         instance.color = self.color;
                                     } else {
                                         instance.color = infection_starting_color
@@ -374,27 +523,15 @@ impl ScreenSaver for BallScreenSaver {
                                         * dt.as_secs_f32()
                                         / 10.0
                                         + 1.0;
-                                    particle_system.particle_data[i]
-                                        .velocity
-                                        .mul_assign(scalar.clamp(0.5, 2.0));
-
-                                    if particle_system.particle_data[i].velocity.magnitude2()
-                                        > (config.ball_speed * config.ball_speed * 1000.0).max(10.0)
-                                    // we don't want false detections with low configured ball speeds
-                                    {
-                                        log::error!("Particle velocity went haywire. Resetting it to a new random velocity. (velocity: {}, before correcting: {}, scalar: {})", particle_system.particle_data[i].velocity.magnitude(), velocity_if_correcting_it, scalar);
-                                        let mut move_vector = Vector3::new(
-                                            random::<f32>() - 0.5,
-                                            random::<f32>() - 0.5,
-                                            //random::<f32>() - 0.5,
-                                            0.0,
-                                        );
-                                        move_vector = move_vector.normalize() * config.ball_speed;
-                                        particle_system.particle_data[i].velocity = move_vector;
+                                    if scalar.is_normal() {
+                                        particle_system.particle_data[i]
+                                            .velocity
+                                            .mul_assign(scalar.clamp(0.5, 2.0));
                                     }
+
                                     total_velocity += velocity_if_correcting_it;
                                 } else {
-                                    log::error!("Velocity is not normal. Resetting it to new random velocity. (velocity: {:?}, index: {})", particle_system.particle_data[i].velocity, i);
+                                    log::warn!("Velocity is not normal. Resetting it to new random velocity. (velocity: {:?}, index: {})", particle_system.particle_data[i].velocity, i);
                                     let mut move_vector = Vector3::new(
                                         random::<f32>() - 0.5,
                                         random::<f32>() - 0.5,
@@ -457,19 +594,19 @@ impl ScreenSaver for BallScreenSaver {
 
                                             match config.color_mode {
                                                 BallColorMode::Random => {
-                                                    let col = util::random_color();
+                                                    let col = util::color::random_color();
 
                                                     particle_system.instances[i].color = col;
                                                     particle_system.instances[j].color = col;
                                                 }
                                                 BallColorMode::Infection => {
-                                                    if (util::compare_colors_ignoring_alpha(
+                                                    if (util::color::compare_colors_ignoring_alpha(
                                                         other_instance.color,
                                                         self.color,
-                                                    ) || util::compare_colors_ignoring_alpha(
+                                                    ) || util::color::compare_colors_ignoring_alpha(
                                                         instance.color,
                                                         self.color,
-                                                    )) && !util::compare_colors_ignoring_alpha(
+                                                    )) && !util::color::compare_colors_ignoring_alpha(
                                                         instance.color,
                                                         other_instance.color,
                                                     ) {
@@ -514,7 +651,7 @@ impl ScreenSaver for BallScreenSaver {
                                     }
                                 }
                                 BallColorMode::Infection => {
-                                    if util::compare_colors_ignoring_alpha(
+                                    if util::color::compare_colors_ignoring_alpha(
                                         instance.color,
                                         self.color,
                                     ) {
@@ -529,14 +666,14 @@ impl ScreenSaver for BallScreenSaver {
                                     0.0,
                                     1.0,
                                 );
-                                particle_system.instances()[i].color.a = density * density;
+                                particle_system.instances.instances[i].color.a = density * density;
                             }
                         }
                     }
                 }
 
                 if infected_balls >= config.ball_count {
-                    self.color = util::random_color();
+                    self.color = util::color::random_color();
                     particle_system
                         .instances
                         .instances
@@ -651,19 +788,30 @@ impl ScreenSaver for BallScreenSaver {
 
     fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, state: &State<'_>) {
         // lib.rmesh.in
-        render_pass.set_pipeline(&state.render_pipeline);
+        //render_pass.set_pipeline(&state.render_pipeline);
         render_pass.set_bind_group(1, &state.camera_bind_group, &[]);
 
         for model in &self.balls {
+            render_pass.set_pipeline(&model.material.pipeline);
             render_pass.set_bind_group(0, &model.material.bind_group, &[]);
             render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
         }
+    }
+
+    fn get_camera_type(&self) -> CameraType
+    {
+        CameraType::Orthographic()
+    }
+
+    fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>) {
+        (Point3::new(0.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0))
     }
 }
 
 pub struct SnowScreenSaver {
     pub(crate) models: Vec<Model>,
     old_config: Configurator,
+    touch_pos: [f32; 2],
 }
 
 impl ScreenSaver for SnowScreenSaver {
@@ -674,6 +822,7 @@ impl ScreenSaver for SnowScreenSaver {
         Self {
             models: vec![],
             old_config: config,
+            touch_pos: [0.0, 0.0],
         }
     }
 
@@ -684,46 +833,91 @@ impl ScreenSaver for SnowScreenSaver {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
+        pipeline_layout: &wgpu::PipelineLayout,
+        color_format: wgpu::TextureFormat,
+        depth_format: Option<wgpu::TextureFormat>,
+
     ) {
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some("Ground1 Shader"),
+            source: shaders::get(shaders::ShaderType::MeshShader),
+        };
+        let pipeline = create_render_pipeline(
+            device,
+            pipeline_layout,
+            color_format,
+            depth_format,
+            &[model::ModelVertex::desc(), ModelInstanceRaw::desc()],
+            shader,
+        );
+
         //ground defined first so it gets drawn first and doesn't get occluded by the snow
         let ground1 = include_bytes!("resources/textures/ground1.png");
         let diffuse_texture =
             texture::Texture::from_bytes(device, queue, ground1, "ground1.png").unwrap();
-        let billboard = util::create_billboard(
+        let billboard = util::mesh::create_billboard(
             6.0,
             3.0,
             Vector3::new(0.0, 0.0, 0.1),
             diffuse_texture,
             &device,
             &layout,
+            pipeline,
         )
         .unwrap();
         self.models.push(billboard);
 
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some("Ground2 Shader"),
+            source: shaders::get(shaders::ShaderType::MeshShader),
+        };
+        let pipeline = create_render_pipeline(
+            device,
+            pipeline_layout,
+            color_format,
+            depth_format,
+            &[model::ModelVertex::desc(), ModelInstanceRaw::desc()],
+            shader,
+        );
+
         let ground2 = include_bytes!("resources/textures/ground2.png");
         let diffuse_texture =
             texture::Texture::from_bytes(device, queue, ground2, "ground2.png").unwrap();
-        let billboard = util::create_billboard(
+        let billboard = util::mesh::create_billboard(
             6.0,
             3.0,
             Vector3::new(0.0, 0.0, 0.3),
             diffuse_texture,
             &device,
             &layout,
+            pipeline,
         )
         .unwrap();
         self.models.push(billboard);
 
+        let shader = wgpu::ShaderModuleDescriptor {
+            label: Some("Ground3 Shader"),
+            source: shaders::get(shaders::ShaderType::MeshShader),
+        };
+        let pipeline = create_render_pipeline(
+            device,
+            pipeline_layout,
+            color_format,
+            depth_format,
+            &[model::ModelVertex::desc(), ModelInstanceRaw::desc()],
+            shader,
+        );
         let ground3 = include_bytes!("resources/textures/ground3.png");
         let diffuse_texture =
             texture::Texture::from_bytes(device, queue, ground3, "ground3.png").unwrap();
-        let billboard = util::create_billboard(
+        let billboard = util::mesh::create_billboard(
             6.0,
             3.0,
             Vector3::new(0.0, 0.0, 0.5),
             diffuse_texture,
             &device,
             &layout,
+            pipeline,
         )
         .unwrap();
         self.models.push(billboard);
@@ -749,7 +943,24 @@ impl ScreenSaver for SnowScreenSaver {
                 device,
             );
 
-            let snow_material = Material::new(diffuse_texture, device, layout);
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: Some("Snow Shader"),
+                source: shaders::get(shaders::ShaderType::ParticleShader),
+            };
+
+            let snow_material = Material::new(
+                diffuse_texture,
+                device,
+                layout,
+                create_render_pipeline(
+                    device,
+                    pipeline_layout,
+                    color_format,
+                    depth_format,
+                    &[model::ModelVertex::desc(), ParticleInstanceRaw::desc()],
+                    shader,
+                ),
+            );
 
             snow_particle_system.populate_random(config.snowflake_count, device);
             for i in 0..snow_particle_system.instances.len() {
@@ -858,18 +1069,29 @@ impl ScreenSaver for SnowScreenSaver {
         }
     }
 
-    fn handle_input(&mut self, _position: [f32; 2], _id: u64, _enabled: bool) -> bool {
+    fn handle_input(&mut self, position: [f32; 2], _id: u64, _enabled: bool) -> bool {
+        self.touch_pos = position;
         false
     }
 
     fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, state: &State<'_>) {
         // lib.rmesh.in
-        render_pass.set_pipeline(&state.render_pipeline);
+        //render_pass.set_pipeline(&state.render_pipeline);
         render_pass.set_bind_group(1, &state.camera_bind_group, &[]);
 
         for model in &self.models {
+            render_pass.set_pipeline(&model.material.pipeline);
             render_pass.set_bind_group(0, &model.material.bind_group, &[]);
             render_pass.draw_mesh_instanced(&*model.mesh, 0..model.mesh.instance_count() as u32);
         }
+    }
+
+    fn get_camera_type(&self) -> CameraType
+    {
+        CameraType::Orthographic()
+    }
+
+    fn get_camera_position(&self) -> (Point3<f32>, Point3<f32>) {
+        (Point3::new(0.0, 0.0, 0.0), Point3::new(self.touch_pos[0] / 4.0, self.touch_pos[1] / 4.0, 0.0))
     }
 }

@@ -28,6 +28,8 @@ angular-units = "0.2.4"
 egui = {path = "lib/egui/crates/egui"}
 toml_edit = "0.22.22"
 toml = "0.8.19"
+tobj = { version = "4.0.3", features = ["async"] }
+reqwest = "0.12.12"
 
 [dependencies.image]
 version = "0.24"
